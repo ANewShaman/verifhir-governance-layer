@@ -15,3 +15,6 @@ def test_eu_to_us_to_india():
     assert "GDPR" in result.reasoning
     assert "HIPAA" in result.reasoning
     assert "DPDP" in result.reasoning
+
+    # Governance guarantee: decision is bound to a snapshot
+    assert result.regulation_snapshot_version.startswith("adequacy_v1")

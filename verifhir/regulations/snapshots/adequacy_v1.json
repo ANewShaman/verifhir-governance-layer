@@ -1,0 +1,26 @@
+{
+  "snapshot_version": "adequacy_v1_2025-01-01",
+  "generated_on": "2025-01-01",
+  "description": "Static adequacy and applicability snapshot.",
+  "frameworks": {
+    "GDPR": {
+      "scope_trigger": "EU data subject residency",
+      "countries": [
+        "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR",
+        "DE", "GR", "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL",
+        "PL", "PT", "RO", "SK", "SI", "ES", "SE"
+      ],
+      "notes": "Cross-border transfers require adequacy or safeguards."
+    },
+    "HIPAA": {
+      "scope_trigger": "US healthcare data origin",
+      "countries": ["US"],
+      "notes": "Applies to covered entities and business associates."
+    },
+    "DPDP": {
+      "scope_trigger": "Processing or transfer to India",
+      "countries": ["IN"],
+      "notes": "Applies to digital personal data under Indian jurisdiction."
+    }
+  }
+}

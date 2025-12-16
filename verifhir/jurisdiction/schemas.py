@@ -14,3 +14,4 @@ class JurisdictionResolution:
     context: JurisdictionContext
     applicable_regulations: List[str]
     reasoning: Dict[str, str]
+    regulation_snapshot_version: str

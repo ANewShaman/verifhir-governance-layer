@@ -1,16 +1,6 @@
 from typing import List, Dict
 from .schemas import JurisdictionContext, JurisdictionResolution
-
-
-# Static regulatory triggers (explicit and conservative)
-GDPR_COUNTRIES = {
-    "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR",
-    "DE", "GR", "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL",
-    "PL", "PT", "RO", "SK", "SI", "ES", "SE"
-}
-
-HIPAA_COUNTRY = "US"
-DPDP_COUNTRY = "IN"
+from verifhir.regulations.loader import load_adequacy_snapshot
 
 
 def resolve_jurisdiction(
@@ -19,9 +9,18 @@ def resolve_jurisdiction(
     data_subject_country: str
 ) -> JurisdictionResolution:
     """
-    Resolve which regulatory frameworks apply to a dataset transfer.
-    This function is deterministic and does not perform legal interpretation.
+    Resolve applicable regulatory frameworks using a versioned adequacy snapshot.
+    No regulatory scope is hardcoded in this function.
     """
+
+    # 1. Load the snapshot (policy)
+    snapshot = load_adequacy_snapshot("adequacy_v1.json")
+    frameworks = snapshot["frameworks"]
+
+    # 2. Extract scope data from snapshot
+    gdpr_countries = set(frameworks["GDPR"]["countries"])
+    hipaa_countries = set(frameworks["HIPAA"]["countries"])
+    dpdp_countries = set(frameworks["DPDP"]["countries"])
 
     context = JurisdictionContext(
         source_country=source_country,
@@ -32,29 +31,23 @@ def resolve_jurisdiction(
     applicable: List[str] = []
     reasoning: Dict[str, str] = {}
 
-    # GDPR trigger: data subject residency
-    if data_subject_country in GDPR_COUNTRIES:
+    # 3. Apply deterministic logic using snapshot data
+
+    if data_subject_country in gdpr_countries:
         applicable.append("GDPR")
-        reasoning["GDPR"] = (
-            "Applies because the data subject is a resident of the European Union."
-        )
+        reasoning["GDPR"] = frameworks["GDPR"]["notes"]
 
-    # HIPAA trigger: source country
-    if source_country == HIPAA_COUNTRY:
+    if source_country in hipaa_countries:
         applicable.append("HIPAA")
-        reasoning["HIPAA"] = (
-            "Applies because the data originates from the United States healthcare system."
-        )
+        reasoning["HIPAA"] = frameworks["HIPAA"]["notes"]
 
-    # DPDP trigger: destination country
-    if destination_country == DPDP_COUNTRY:
+    if destination_country in dpdp_countries:
         applicable.append("DPDP")
-        reasoning["DPDP"] = (
-            "Applies because the data is transferred to India, invoking DPDP obligations."
-        )
+        reasoning["DPDP"] = frameworks["DPDP"]["notes"]
 
     return JurisdictionResolution(
         context=context,
         applicable_regulations=applicable,
-        reasoning=reasoning
+        reasoning=reasoning,
+        regulation_snapshot_version=snapshot["snapshot_version"]
     )
