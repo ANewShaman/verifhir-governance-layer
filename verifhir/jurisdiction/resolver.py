@@ -1,87 +1,86 @@
-from typing import List, Dict
+from typing import List, Dict, Optional
+from .schemas import JurisdictionContext, JurisdictionResolution
 from verifhir.regulations.loader import load_adequacy_snapshot
-from verifhir.jurisdiction.schemas import (
-    JurisdictionContext,
-    JurisdictionResolution,
-    GoverningRule,
-)
 
-# Deterministic company policy:
-# Order defines which regulation governs when multiple apply.
-RESTRICTIVENESS_ORDER = [
-    "GDPR",
-    "HIPAA",
-    "DPDP",
-]
+
+# Architectural policy: deterministic strictness hierarchy
+# Top = most restrictive = governing regulation
+RESTRICTIVENESS_ORDER = ["GDPR", "HIPAA", "DPDP"]
 
 
 def resolve_jurisdiction(
     source_country: str,
-    destination_countries: List[str],
-    data_subject_country: str
+    destination_country: str,
+    data_subject_country: str,
+    intermediate_countries: Optional[List[str]] = None
 ) -> JurisdictionResolution:
     """
-    Resolve applicable and governing regulatory frameworks for a
-    potentially multi-hop cross-border data transfer.
-
-    This function is:
-    - Deterministic
-    - Snapshot-driven
-    - Replayable
-    - Free of legal interpretation
+    Resolve applicable and governing regulatory frameworks using a
+    versioned adequacy snapshot. Deterministic, explainable, auditable.
     """
 
-    # 1. Load versioned regulatory snapshot (policy as data)
+    if intermediate_countries is None:
+        intermediate_countries = []
+
+    # 1. Load versioned policy snapshot
     snapshot = load_adequacy_snapshot("adequacy_v1.json")
     frameworks = snapshot["frameworks"]
 
-    # 2. Extract scope data from snapshot
+    # 2. Extract regulatory scopes from snapshot
     gdpr_countries = set(frameworks["GDPR"]["countries"])
     hipaa_countries = set(frameworks["HIPAA"]["countries"])
     dpdp_countries = set(frameworks["DPDP"]["countries"])
 
-    # 3. Build factual context (descriptive only)
-    context = JurisdictionContext(
-        source_country=source_country,
-        destination_country=" → ".join(destination_countries),
-        data_subject_country=data_subject_country,
-    )
+    # All jurisdictions touched by the transfer
+    touch_points = {source_country, destination_country}
+    touch_points.update(intermediate_countries)
 
-    applicable = set()
+    applicable: List[str] = []
     reasoning: Dict[str, str] = {}
 
-    # 4. Apply deterministic applicability rules
+    # 3. Regulation triggers (cumulative)
 
-    # GDPR — based on data subject residency
+    # GDPR — residency based (MVP scope)
     if data_subject_country in gdpr_countries:
-        applicable.add("GDPR")
+        applicable.append("GDPR")
         reasoning["GDPR"] = frameworks["GDPR"]["notes"]
 
-    # HIPAA — based on source country
+    # HIPAA — US healthcare origin
     if source_country in hipaa_countries:
-        applicable.add("HIPAA")
-        reasoning["HIPAA"] = frameworks["HIPAA"]["notes"]
+        if "HIPAA" not in applicable:
+            applicable.append("HIPAA")
+            reasoning["HIPAA"] = frameworks["HIPAA"]["notes"]
 
-    # DPDP — if any hop touches India
-    for hop in destination_countries:
-        if hop in dpdp_countries:
-            applicable.add("DPDP")
+    # DPDP — any touchpoint involving India
+    if not dpdp_countries.isdisjoint(touch_points):
+        if "DPDP" not in applicable:
+            applicable.append("DPDP")
             reasoning["DPDP"] = frameworks["DPDP"]["notes"]
-            break
 
-    # 5. Determine governing regulation (most restrictive wins)
-    governing = GoverningRule.NONE
+    # 4. Determine governing regulation (most restrictive wins)
+    governing: Optional[str] = None
 
     for rule in RESTRICTIVENESS_ORDER:
         if rule in applicable:
-            governing = GoverningRule(rule)
+            governing = rule
             break
 
-    # 6. Return immutable, auditable resolution
+    # Defensive fallback (future-proofing)
+    if governing is None and applicable:
+        governing = applicable[0]
+
+    # Normalize order for deterministic output
+    applicable = sorted(applicable)
+
     return JurisdictionResolution(
-        context=context,
-        applicable_regulations=sorted(applicable),
-        governing_regulation=governing,
+        context=JurisdictionContext(
+            source_country=source_country,
+            destination_country=destination_country,
+            data_subject_country=data_subject_country,
+            intermediate_countries=intermediate_countries
+        ),
+        applicable_regulations=applicable,
         reasoning=reasoning,
         regulation_snapshot_version=snapshot["snapshot_version"],
+        governing_regulation=governing
     )

@@ -1,35 +1,36 @@
 from verifhir.jurisdiction.resolver import resolve_jurisdiction
-from verifhir.jurisdiction.schemas import GoverningRule
-
 
 def test_multihop_all_regulations_apply_most_restrictive_wins():
     """
     EU data subject, US source, transfer path touches India.
     All regulations apply; GDPR must govern.
     """
+    # CORRECTED SIGNATURE: Separate destination from intermediates
     result = resolve_jurisdiction(
         source_country="US",
-        destination_countries=["GB", "IN"],
-        data_subject_country="DE"
+        destination_country="IN",  # The final destination
+        data_subject_country="DE",
+        intermediate_countries=["GB"] # The hop
     )
 
     assert set(result.applicable_regulations) == {"GDPR", "HIPAA", "DPDP"}
-    assert result.governing_regulation == GoverningRule.GDPR
+    # CORRECTED ASSERTION: Use string "GDPR", not Enum
+    assert result.governing_regulation == "GDPR"
     assert result.regulation_snapshot_version == "adequacy_v1_2025-01-01"
 
 
 def test_single_hop_us_to_india_with_eu_subject():
     """
-    Single-hop transfer still works via list abstraction.
+    Single-hop transfer logic check.
     """
     result = resolve_jurisdiction(
         source_country="US",
-        destination_countries=["IN"],
+        destination_country="IN",
         data_subject_country="FR"
     )
 
     assert set(result.applicable_regulations) == {"GDPR", "HIPAA", "DPDP"}
-    assert result.governing_regulation == GoverningRule.GDPR
+    assert result.governing_regulation == "GDPR"
 
 
 def test_us_to_us_non_eu_subject_hipaa_only():
@@ -39,12 +40,12 @@ def test_us_to_us_non_eu_subject_hipaa_only():
     """
     result = resolve_jurisdiction(
         source_country="US",
-        destination_countries=["US"],
+        destination_country="US",
         data_subject_country="CA"
     )
 
     assert result.applicable_regulations == ["HIPAA"]
-    assert result.governing_regulation == GoverningRule.HIPAA
+    assert result.governing_regulation == "HIPAA"
 
 
 def test_eu_subject_non_us_non_india_transfer_gdpr_only():
@@ -54,24 +55,25 @@ def test_eu_subject_non_us_non_india_transfer_gdpr_only():
     """
     result = resolve_jurisdiction(
         source_country="JP",
-        destination_countries=["SG"],
+        destination_country="SG",
         data_subject_country="IT"
     )
 
     assert result.applicable_regulations == ["GDPR"]
-    assert result.governing_regulation == GoverningRule.GDPR
+    assert result.governing_regulation == "GDPR"
 
 
 def test_unregulated_transfer_defaults_to_none():
     """
     No countries involved trigger any regulation.
-    System must not crash and must return NONE.
+    System must not crash and must return None.
     """
     result = resolve_jurisdiction(
         source_country="BR",
-        destination_countries=["ZA"],
+        destination_country="ZA",
         data_subject_country="JP"
     )
 
     assert result.applicable_regulations == []
-    assert result.governing_regulation == GoverningRule.NONE
+    # CORRECTED ASSERTION: Use Python None
+    assert result.governing_regulation is None
