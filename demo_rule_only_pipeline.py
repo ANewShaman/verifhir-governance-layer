@@ -7,44 +7,41 @@ from verifhir.scoring.utils import violations_to_risk_components
 from verifhir.scoring.aggregator import aggregate_risk_components
 from verifhir.scoring.decision import build_rule_only_decision
 
-# --- AUDIT-STYLE UI THEME ---
+# --- PROFESSIONAL UI THEME ---
 class Colors:
-    # Status Colors (The only actual colors)
-    OKGREEN = '\033[92m'     # Success (Green)
-    WARNING = '\033[93m'     # Warning (Amber)
+    HEADER = '\033[95m'      # Keeping header distinct but readable
+    BLUE = '\033[94m'        # Standard Info
+    OKCYAN = '\033[96m'      # (Unused in formal mode)
+    OKGREEN = '\033[92m'     # Success
+    WARNING = '\033[93m'     # Warning (Gold/Amber)
     FAIL = '\033[91m'        # Critical (Red)
-    
-    # Structure Colors (Monochrome)
-    HEADER = '\033[1m'       # Bold White (No fancy purple)
-    MUTED = '\033[90m'       # Dark Grey (For borders/subtle text)
     ENDC = '\033[0m'         # Reset
     BOLD = '\033[1m'         # Emphasis
-    UNDERLINE = '\033[4m'    # Links
+    UNDERLINE = '\033[4m'    # Links/Headers
     
-    # Semantic Mapping
-    BORDER = MUTED           # Borders should fade into background
-    LABEL = ENDC             # Labels are standard white
-    VALUE = BOLD             # Values are bold white
+    # Formal Mapping
+    LABEL = BLUE             # For keys like "Source Country"
+    VALUE = ENDC             # For values (Plain white/grey)
+    HIGHLIGHT = BOLD         # For important values
 
 def print_separator(char="-"):
     width = shutil.get_terminal_size().columns
-    # Using MUTED (Dark Grey) for borders so they don't distract
-    print(Colors.BORDER + (char * width) + Colors.ENDC)
+    print(Colors.BLUE + (char * width) + Colors.ENDC)
 
 def print_section(title):
     print("\n")
     print_separator("=")
-    print(f"  {Colors.HEADER}{title.upper()}{Colors.ENDC}")
+    print(f"{Colors.BOLD}{Colors.HEADER}  {title.upper()}{Colors.ENDC}")
     print_separator("=")
 
 def print_kv(key, value, color=Colors.VALUE):
-    # Standard 'Audit Log' formatting
+    # Fixed width formatting for clean alignment
     print(f"{Colors.LABEL}{key:<25}{Colors.ENDC} : {color}{value}{Colors.ENDC}")
 
 # --- MAIN DEMO ---
 def run_clean_demo():
     # 1. SETUP
-    print_section("Scenario Initialization")
+    print_section("SCENARIO INITIALIZATION")
     
     source = "US"
     dest = "IN"
@@ -59,21 +56,20 @@ def run_clean_demo():
 
     print_kv("Source Country", source)
     print_kv("Destination Country", dest)
-    print_kv("Data Subject Origin", subject, Colors.VALUE)
+    print_kv("Data Subject Origin", subject, Colors.HIGHLIGHT)
     print_kv("Resource Type", fhir_data["resourceType"])
-    # Highlight the input snippet slightly differently? No, keep it bold.
-    print_kv("Input Snippet", fhir_data["note"][0]["text"])
+    print_kv("Input Snippet", fhir_data["note"][0]["text"], Colors.HIGHLIGHT)
 
     # 2. JURISDICTION
-    print_section("Step 1: Jurisdiction Engine")
+    print_section("STEP 1: JURISDICTION ENGINE")
     jurisdiction = resolve_jurisdiction(source, dest, subject)
     
     print_kv("Applicable Laws", ", ".join(jurisdiction.applicable_regulations))
-    print_kv("Governing Regulation", jurisdiction.governing_regulation)
+    print_kv("Governing Regulation", jurisdiction.governing_regulation, Colors.HIGHLIGHT)
     print_kv("Reasoning", jurisdiction.reasoning[jurisdiction.governing_regulation])
 
     # 3. RULES
-    print_section("Step 2: Rule Enforcement")
+    print_section("STEP 2: RULE ENFORCEMENT")
     violations = run_deterministic_rules(jurisdiction, fhir_data)
 
     if not violations:
@@ -87,24 +83,24 @@ def run_clean_demo():
             print(f"   └─ Message  : {v.description}")
 
     # 4. SCORING
-    print_section("Step 3: Risk Scoring")
+    print_section("STEP 3: RISK SCORING")
     risks = violations_to_risk_components(violations)
     summary = aggregate_risk_components(risks)
     
     score = summary['total_risk_score']
-    # Traffic Light Logic
+    # Professional Traffic Light
     if score <= 1.0:
         score_color = Colors.OKGREEN
     elif score <= 6.0:
-        score_color = Colors.WARNING 
+        score_color = Colors.WARNING  # Amber/Gold
     else:
-        score_color = Colors.FAIL
+        score_color = Colors.FAIL     # Red
     
     print_kv("Total Risk Score", f"{score:.2f}", score_color + Colors.BOLD)
     print_kv("Contributing Factors", summary['component_count'])
 
     # 5. VERDICT
-    print_section("Step 4: Final Verdict")
+    print_section("STEP 4: FINAL VERDICT")
     decision = build_rule_only_decision(score, risks)
 
     if decision.outcome.name == "APPROVED":
