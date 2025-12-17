@@ -1,101 +1,124 @@
-from pprint import pprint
-
+import json
+import shutil
+from dataclasses import asdict
 from verifhir.jurisdiction.resolver import resolve_jurisdiction
 from verifhir.orchestrator.rule_engine import run_deterministic_rules
 from verifhir.scoring.utils import violations_to_risk_components
 from verifhir.scoring.aggregator import aggregate_risk_components
 from verifhir.scoring.decision import build_rule_only_decision
 
+# --- AUDIT-STYLE UI THEME ---
+class Colors:
+    # Status Colors (The only actual colors)
+    OKGREEN = '\033[92m'     # Success (Green)
+    WARNING = '\033[93m'     # Warning (Amber)
+    FAIL = '\033[91m'        # Critical (Red)
+    
+    # Structure Colors (Monochrome)
+    HEADER = '\033[1m'       # Bold White (No fancy purple)
+    MUTED = '\033[90m'       # Dark Grey (For borders/subtle text)
+    ENDC = '\033[0m'         # Reset
+    BOLD = '\033[1m'         # Emphasis
+    UNDERLINE = '\033[4m'    # Links
+    
+    # Semantic Mapping
+    BORDER = MUTED           # Borders should fade into background
+    LABEL = ENDC             # Labels are standard white
+    VALUE = BOLD             # Values are bold white
 
-def run_demo():
-    print("\n=== VERIFHIR — RULE-ONLY GOVERNANCE DEMO ===\n")
+def print_separator(char="-"):
+    width = shutil.get_terminal_size().columns
+    # Using MUTED (Dark Grey) for borders so they don't distract
+    print(Colors.BORDER + (char * width) + Colors.ENDC)
 
-    # --------------------------------------------------
-    # 1. Input Scenario (What a user provides)
-    # --------------------------------------------------
-    print("1. INPUT METADATA")
-    print("-----------------")
+def print_section(title):
+    print("\n")
+    print_separator("=")
+    print(f"  {Colors.HEADER}{title.upper()}{Colors.ENDC}")
+    print_separator("=")
 
-    source_country = "US"
-    destination_country = "US"
-    data_subject_country = "DE"
+def print_kv(key, value, color=Colors.VALUE):
+    # Standard 'Audit Log' formatting
+    print(f"{Colors.LABEL}{key:<25}{Colors.ENDC} : {color}{value}{Colors.ENDC}")
 
-    print(f"Source Country      : {source_country}")
-    print(f"Destination Country : {destination_country}")
-    print(f"Data Subject        : {data_subject_country}")
-
-    # Example FHIR resource (contains identifier in free text)
-    fhir_resource = {
+# --- MAIN DEMO ---
+def run_clean_demo():
+    # 1. SETUP
+    print_section("Scenario Initialization")
+    
+    source = "US"
+    dest = "IN"
+    subject = "DE"
+    
+    fhir_data = {
         "resourceType": "Observation",
-        "note": [
-            {"text": "Patient ID 99999 reported symptoms"}
-        ]
+        "id": "obs-report-101",
+        "status": "final",
+        "note": [{"text": "Patient ID 99999 reported feeling anxious about the transfer."}]
     }
 
-    # --------------------------------------------------
-    # 2. Jurisdiction Resolution
-    # --------------------------------------------------
-    print("\n2. JURISDICTION RESOLUTION")
-    print("--------------------------")
+    print_kv("Source Country", source)
+    print_kv("Destination Country", dest)
+    print_kv("Data Subject Origin", subject, Colors.VALUE)
+    print_kv("Resource Type", fhir_data["resourceType"])
+    # Highlight the input snippet slightly differently? No, keep it bold.
+    print_kv("Input Snippet", fhir_data["note"][0]["text"])
 
-    jurisdiction = resolve_jurisdiction(
-        source_country=source_country,
-        destination_country=destination_country,
-        data_subject_country=data_subject_country
-    )
+    # 2. JURISDICTION
+    print_section("Step 1: Jurisdiction Engine")
+    jurisdiction = resolve_jurisdiction(source, dest, subject)
+    
+    print_kv("Applicable Laws", ", ".join(jurisdiction.applicable_regulations))
+    print_kv("Governing Regulation", jurisdiction.governing_regulation)
+    print_kv("Reasoning", jurisdiction.reasoning[jurisdiction.governing_regulation])
 
-    pprint(jurisdiction)
-
-    # --------------------------------------------------
-    # 3. Rule Execution (Governed by Regulation)
-    # --------------------------------------------------
-    print("\n3. RULE EXECUTION")
-    print("-----------------")
-
-    violations = run_deterministic_rules(jurisdiction, fhir_resource)
+    # 3. RULES
+    print_section("Step 2: Rule Enforcement")
+    violations = run_deterministic_rules(jurisdiction, fhir_data)
 
     if not violations:
-        print("No violations detected.")
+        print(f"{Colors.OKGREEN}✔ No rules violated.{Colors.ENDC}")
     else:
-        print(f"Detected {len(violations)} violation(s):")
-        for v in violations:
-            pprint(v)
+        for idx, v in enumerate(violations, 1):
+            severity_color = Colors.FAIL if v.severity.value == "MAJOR" else Colors.WARNING
+            print(f"{idx}. {Colors.BOLD}{v.violation_type}{Colors.ENDC}")
+            print(f"   ├─ Severity : {severity_color}{v.severity.value}{Colors.ENDC}")
+            print(f"   ├─ Citation : {v.citation}")
+            print(f"   └─ Message  : {v.description}")
 
-    # --------------------------------------------------
-    # 4. Risk Component Construction
-    # --------------------------------------------------
-    print("\n4. RISK COMPONENTS")
-    print("------------------")
+    # 4. SCORING
+    print_section("Step 3: Risk Scoring")
+    risks = violations_to_risk_components(violations)
+    summary = aggregate_risk_components(risks)
+    
+    score = summary['total_risk_score']
+    # Traffic Light Logic
+    if score <= 1.0:
+        score_color = Colors.OKGREEN
+    elif score <= 6.0:
+        score_color = Colors.WARNING 
+    else:
+        score_color = Colors.FAIL
+    
+    print_kv("Total Risk Score", f"{score:.2f}", score_color + Colors.BOLD)
+    print_kv("Contributing Factors", summary['component_count'])
 
-    risk_components = violations_to_risk_components(violations)
+    # 5. VERDICT
+    print_section("Step 4: Final Verdict")
+    decision = build_rule_only_decision(score, risks)
 
-    for rc in risk_components:
-        pprint(rc)
+    if decision.outcome.name == "APPROVED":
+        outcome_color = Colors.OKGREEN
+    elif decision.outcome.name == "APPROVED_WITH_REDACTIONS":
+        outcome_color = Colors.WARNING
+    else:
+        outcome_color = Colors.FAIL
 
-    # --------------------------------------------------
-    # 5. Risk Aggregation
-    # --------------------------------------------------
-    print("\n5. RISK AGGREGATION")
-    print("------------------")
-
-    score_summary = aggregate_risk_components(risk_components)
-    pprint(score_summary)
-
-    # --------------------------------------------------
-    # 6. Compliance Decision (Rule-Only)
-    # --------------------------------------------------
-    print("\n6. COMPLIANCE DECISION")
-    print("---------------------")
-
-    decision = build_rule_only_decision(
-        total_risk_score=score_summary["total_risk_score"],
-        risk_components=risk_components
-    )
-
-    pprint(decision)
-
-    print("\n=== END OF DEMO ===\n")
-
+    print(f"{Colors.BOLD}DECISION:{Colors.ENDC}  [{outcome_color}{decision.outcome.name}{Colors.ENDC}]")
+    print(f"{Colors.BOLD}RATIONALE:{Colors.ENDC} {decision.rationale}")
+    
+    print_separator("=")
+    print("\n")
 
 if __name__ == "__main__":
-    run_demo()
+    run_clean_demo()
