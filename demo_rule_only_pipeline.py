@@ -7,22 +7,17 @@ from verifhir.scoring.utils import violations_to_risk_components
 from verifhir.scoring.aggregator import aggregate_risk_components
 from verifhir.scoring.decision import build_rule_only_decision
 
-# --- PROFESSIONAL UI THEME ---
+# --- VISUALIZATION HELPERS ---
 class Colors:
-    HEADER = '\033[95m'      # Keeping header distinct but readable
-    BLUE = '\033[94m'        # Standard Info
-    OKCYAN = '\033[96m'      # (Unused in formal mode)
-    OKGREEN = '\033[92m'     # Success
-    WARNING = '\033[93m'     # Warning (Gold/Amber)
-    FAIL = '\033[91m'        # Critical (Red)
-    ENDC = '\033[0m'         # Reset
-    BOLD = '\033[1m'         # Emphasis
-    UNDERLINE = '\033[4m'    # Links/Headers
-    
-    # Formal Mapping
-    LABEL = BLUE             # For keys like "Source Country"
-    VALUE = ENDC             # For values (Plain white/grey)
-    HIGHLIGHT = BOLD         # For important values
+    HEADER = '\033[95m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RED = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
 
 def print_separator(char="-"):
     width = shutil.get_terminal_size().columns
@@ -34,9 +29,8 @@ def print_section(title):
     print(f"{Colors.BOLD}{Colors.HEADER}  {title.upper()}{Colors.ENDC}")
     print_separator("=")
 
-def print_kv(key, value, color=Colors.VALUE):
-    # Fixed width formatting for clean alignment
-    print(f"{Colors.LABEL}{key:<25}{Colors.ENDC} : {color}{value}{Colors.ENDC}")
+def print_kv(key, value, color=Colors.ENDC):
+    print(f"{Colors.BOLD}{key:<25}{Colors.ENDC} : {color}{value}{Colors.ENDC}")
 
 # --- MAIN DEMO ---
 def run_clean_demo():
@@ -56,16 +50,16 @@ def run_clean_demo():
 
     print_kv("Source Country", source)
     print_kv("Destination Country", dest)
-    print_kv("Data Subject Origin", subject, Colors.HIGHLIGHT)
+    print_kv("Data Subject Origin", subject, Colors.CYAN)
     print_kv("Resource Type", fhir_data["resourceType"])
-    print_kv("Input Snippet", fhir_data["note"][0]["text"], Colors.HIGHLIGHT)
+    print_kv("Input Snippet", fhir_data["note"][0]["text"], Colors.YELLOW)
 
     # 2. JURISDICTION
     print_section("STEP 1: JURISDICTION ENGINE")
     jurisdiction = resolve_jurisdiction(source, dest, subject)
     
     print_kv("Applicable Laws", ", ".join(jurisdiction.applicable_regulations))
-    print_kv("Governing Regulation", jurisdiction.governing_regulation, Colors.HIGHLIGHT)
+    print_kv("Governing Regulation", jurisdiction.governing_regulation, Colors.CYAN + Colors.BOLD)
     print_kv("Reasoning", jurisdiction.reasoning[jurisdiction.governing_regulation])
 
     # 3. RULES
@@ -73,10 +67,10 @@ def run_clean_demo():
     violations = run_deterministic_rules(jurisdiction, fhir_data)
 
     if not violations:
-        print(f"{Colors.OKGREEN}✔ No rules violated.{Colors.ENDC}")
+        print(f"{Colors.GREEN}✔ No rules violated.{Colors.ENDC}")
     else:
         for idx, v in enumerate(violations, 1):
-            severity_color = Colors.FAIL if v.severity.value == "MAJOR" else Colors.WARNING
+            severity_color = Colors.RED if v.severity.value == "MAJOR" else Colors.YELLOW
             print(f"{idx}. {Colors.BOLD}{v.violation_type}{Colors.ENDC}")
             print(f"   ├─ Severity : {severity_color}{v.severity.value}{Colors.ENDC}")
             print(f"   ├─ Citation : {v.citation}")
@@ -88,13 +82,7 @@ def run_clean_demo():
     summary = aggregate_risk_components(risks)
     
     score = summary['total_risk_score']
-    # Professional Traffic Light
-    if score <= 1.0:
-        score_color = Colors.OKGREEN
-    elif score <= 6.0:
-        score_color = Colors.WARNING  # Amber/Gold
-    else:
-        score_color = Colors.FAIL     # Red
+    score_color = Colors.GREEN if score <= 1.0 else (Colors.YELLOW if score <= 6.0 else Colors.RED)
     
     print_kv("Total Risk Score", f"{score:.2f}", score_color + Colors.BOLD)
     print_kv("Contributing Factors", summary['component_count'])
@@ -103,12 +91,11 @@ def run_clean_demo():
     print_section("STEP 4: FINAL VERDICT")
     decision = build_rule_only_decision(score, risks)
 
-    if decision.outcome.name == "APPROVED":
-        outcome_color = Colors.OKGREEN
-    elif decision.outcome.name == "APPROVED_WITH_REDACTIONS":
-        outcome_color = Colors.WARNING
-    else:
-        outcome_color = Colors.FAIL
+    outcome_color = Colors.GREEN
+    if decision.outcome.name == "APPROVED_WITH_REDACTIONS":
+        outcome_color = Colors.YELLOW
+    elif decision.outcome.name == "REJECTED":
+        outcome_color = Colors.RED
 
     print(f"{Colors.BOLD}DECISION:{Colors.ENDC}  [{outcome_color}{decision.outcome.name}{Colors.ENDC}]")
     print(f"{Colors.BOLD}RATIONALE:{Colors.ENDC} {decision.rationale}")
