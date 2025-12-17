@@ -1,11 +1,7 @@
-# Deterministic, rule-only thresholds.
-# These act as the "Policy Gate" for the system.
-# They are externalized here so they can be tuned without changing code logic.
+# Updated deterministic thresholds (policy-aligned)
 
-LOW_RISK_MAX = 3.0
-MEDIUM_RISK_MAX = 8.0
+# LOW risk must mean "nearly no risk"
+LOW_RISK_MAX = 1.0      # Minor-only issues (e.g., DPDP MINOR = 0.5)
 
-# Interpretation:
-# 0.0 - 3.0  -> LOW (Approve)
-# 3.1 - 8.0  -> MEDIUM (Redact)
-# 8.1+       -> HIGH (Reject)
+# MAJOR violations must trigger remediation
+MEDIUM_RISK_MAX = 6.0
