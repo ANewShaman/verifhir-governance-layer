@@ -1,8 +1,8 @@
 import re
 
-# Centralized pattern for identifying common medical IDs in unstructured text.
-# Matches: "ID 123", "MRN: 999", "SSN # 000", etc.
+# Centralized pattern for identifying common medical IDs.
+# Added 'cpf' for Brazil (LGPD) support.
 IDENTIFIER_REGEX = re.compile(
-    r"(id|mrn|ssn)\s*[:#]?\s*\d+",
+    r"(id|mrn|ssn|cpf)\s*[:#]?\s*[\d\.\-]+", # Updated to allow dots/dashes common in CPF
     re.IGNORECASE
 )

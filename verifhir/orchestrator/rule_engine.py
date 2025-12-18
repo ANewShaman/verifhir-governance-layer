@@ -1,7 +1,7 @@
 from typing import List
 from verifhir.jurisdiction.schemas import JurisdictionResolution
 from verifhir.models.violation import Violation
-
+from verifhir.rules.lgpd_free_text_identifier_rule import LGPDFreeTextIdentifierRule
 # Import standard rules
 from verifhir.rules.gdpr_free_text_identifier_rule import GDPRFreeTextIdentifierRule
 from verifhir.rules.hipaa_identifier_rule import HIPAAIdentifierRule
@@ -33,15 +33,13 @@ def run_deterministic_rules(jurisdiction: JurisdictionResolution, resource: dict
     # Rules internally check 'jurisdiction.applicable_regulations' 
     # and skip execution if they don't apply.
     active_rules = [
-        # Original Core Set
-        GDPRFreeTextIdentifierRule(jurisdiction),
-        HIPAAIdentifierRule(jurisdiction),
-        DPDPDataPrincipalRule(jurisdiction),
-        
-        # Tier 1 Extensions (Week 2 Hardening)
-        UKGDPRFreeTextIdentifierRule(jurisdiction),
-        PIPEDAFreeTextIdentifierRule(jurisdiction)
-    ]
+    GDPRFreeTextIdentifierRule(jurisdiction),
+    HIPAAIdentifierRule(jurisdiction),
+    DPDPDataPrincipalRule(jurisdiction),
+    UKGDPRFreeTextIdentifierRule(jurisdiction),
+    PIPEDAFreeTextIdentifierRule(jurisdiction),
+    LGPDFreeTextIdentifierRule(jurisdiction) # <--- ADD THIS LINE
+]
 
     # Execute each rule
     for rule in active_rules:
