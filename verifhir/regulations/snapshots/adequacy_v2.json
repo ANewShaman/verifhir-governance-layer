@@ -1,0 +1,69 @@
+{
+  "meta": {
+    "version": "adequacy_v2_2025-01-15",
+    "effective_date": "2025-01-15",
+    "authority": "VeriFHIR Governance Committee"
+  },
+  "regulations": {
+    "GDPR": {
+      "countries": ["DE", "FR", "IT", "ES", "NL", "BE", "SE", "PL", "AT", "DK", "FI", "IE"],
+      "scope_trigger": "EU data subject residency",
+      "regulatory_alignment": "GDPR-Native",
+      "notes": "General Data Protection Regulation"
+    },
+    "UK_GDPR": {
+      "countries": ["GB"],
+      "scope_trigger": "UK data subject residency",
+      "regulatory_alignment": "GDPR-Equivalent",
+      "notes": "UK GDPR applies post-Brexit under ICO guidance"
+    },
+    "HIPAA": {
+      "countries": ["US"],
+      "scope_trigger": "US covered entity origin",
+      "regulatory_alignment": "Sectoral-Healthcare",
+      "notes": "Health Insurance Portability and Accountability Act"
+    },
+    "DPDP": {
+      "countries": ["IN"],
+      "scope_trigger": "Digital personal data processed in India",
+      "regulatory_alignment": "Adequacy-Pending",
+      "notes": "Digital Personal Data Protection Act 2023"
+    },
+    "PIPEDA": {
+      "countries": ["CA"],
+      "scope_trigger": "Commercial personal data",
+      "regulatory_alignment": "Adequacy-Partial",
+      "notes": "Consent-based processing under PIPEDA"
+    },
+    "LGPD": {
+      "countries": ["BR"],
+      "scope_trigger": "Brazilian data subject residency",
+      "regulatory_alignment": "GDPR-Inspired",
+      "notes": "LGPD aligned with GDPR principles"
+    },
+    "APPI": {
+      "countries": ["JP"],
+      "scope_trigger": "Personal information of Japanese residents",
+      "regulatory_alignment": "Adequacy-Mutual",
+      "notes": "Minimal governance encoding; rules to be expanded"
+    },
+    "POPIA": {
+      "countries": ["ZA"],
+      "scope_trigger": "Personal information processing in South Africa",
+      "regulatory_alignment": "GDPR-Influenced",
+      "notes": "Scope encoded; enforcement rules deferred"
+    },
+    "UAE_PDPL": {
+      "countries": ["AE"],
+      "scope_trigger": "Processing of personal data in UAE",
+      "regulatory_alignment": "Emerging",
+      "notes": "Cross-border transfers subject to adequacy"
+    },
+    "MY_HEALTH_RECORDS_AU": {
+      "countries": ["AU"],
+      "scope_trigger": "National electronic health records",
+      "regulatory_alignment": "Sectoral-Healthcare",
+      "notes": "Healthcare-specific regime; rule depth deferred"
+    }
+  }
+}

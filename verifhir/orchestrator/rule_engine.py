@@ -1,60 +1,52 @@
-from typing import Dict, List, Any
+from typing import List
 from verifhir.jurisdiction.schemas import JurisdictionResolution
-from verifhir.rules.base import DeterministicRule
-
-# Import the specific rules created on Day 8
-from verifhir.rules.gdpr import GDPRFreeTextIdentifierRule
-from verifhir.rules.hipaa import HIPAAMRNRule
-from verifhir.rules.dpdp import DPDPExcessiveDataRule
 from verifhir.models.violation import Violation
 
-# NOTE: We intentionally enforce only the governing regulation to avoid
-# conflicting obligations across legal frameworks.
-RULE_REGISTRY: Dict[str, List[DeterministicRule]] = {
-    "GDPR": [
-        GDPRFreeTextIdentifierRule(),
-    ],
-    "HIPAA": [
-        HIPAAMRNRule(),
-    ],
-    "DPDP": [
-        DPDPExcessiveDataRule(),
-    ],
-}
+# Import standard rules
+from verifhir.rules.gdpr_free_text_identifier_rule import GDPRFreeTextIdentifierRule
+from verifhir.rules.hipaa_identifier_rule import HIPAAIdentifierRule
+from verifhir.rules.dpdp_data_principal_rule import DPDPDataPrincipalRule
 
-def run_deterministic_rules(
-    jurisdiction: JurisdictionResolution,
-    fhir_resource: Dict[str, Any]
-) -> List[Violation]:
+# Import Tier 1 regulation rules (Intermediary Hardening)
+from verifhir.rules.uk_gdpr_free_text_identifier_rule import UKGDPRFreeTextIdentifierRule
+from verifhir.rules.pipeda_free_text_identifier_rule import PIPEDAFreeTextIdentifierRule
+
+def run_deterministic_rules(jurisdiction: JurisdictionResolution, resource: dict) -> List[Violation]:
     """
-    Execute deterministic rules based on the governing regulation.
+    Orchestrates the execution of deterministic compliance rules.
     
-    Architectural Decision:
-    We enforce the 'Governing Regulation' (the most restrictive one) 
-    rather than running all applicable rules. This prevents conflict 
-    cycles where laws might have opposing requirements.
+    1. Selects rules based on the jurisdiction context.
+    2. Runs each rule against the provided FHIR resource.
+    3. Aggregates all detected violations.
+    
+    Args:
+        jurisdiction: The resolved jurisdiction context (Week 1 output).
+        resource: The FHIR resource to scan (e.g., Observation, Patient).
+        
+    Returns:
+        List[Violation]: A flat list of all deterministic violations found.
     """
+    
+    all_violations: List[Violation] = []
 
-    # 1. Safety Check: If no regulation governs, no rules run.
-    if jurisdiction.governing_regulation is None:
-        return []
+    # Registry of all available deterministic rules.
+    # Rules internally check 'jurisdiction.applicable_regulations' 
+    # and skip execution if they don't apply.
+    active_rules = [
+        # Original Core Set
+        GDPRFreeTextIdentifierRule(jurisdiction),
+        HIPAAIdentifierRule(jurisdiction),
+        DPDPDataPrincipalRule(jurisdiction),
+        
+        # Tier 1 Extensions (Week 2 Hardening)
+        UKGDPRFreeTextIdentifierRule(jurisdiction),
+        PIPEDAFreeTextIdentifierRule(jurisdiction)
+    ]
 
-    regulation = jurisdiction.governing_regulation
+    # Execute each rule
+    for rule in active_rules:
+        # Rules returns an empty list [] if not applicable
+        found_violations = rule.evaluate(resource)
+        all_violations.extend(found_violations)
 
-    # 2. Registry Lookup
-    if regulation not in RULE_REGISTRY:
-        raise ValueError(f"No rules registered for governing regulation: {regulation}")
-
-    violations: List[Violation] = []
-
-    # 3. Execution Loop
-    for rule in RULE_REGISTRY[regulation]:
-        # Each rule evaluates the resource independently
-        rule_violations = rule.evaluate(fhir_resource)
-        violations.extend(rule_violations)
-
-    # 4. Deterministic Ordering (Micro-Improvement)
-    # Ensure violations are always returned in the same order for stable audits.
-    violations.sort(key=lambda v: (v.regulation, v.violation_type))
-
-    return violations
+    return all_violations

@@ -1,86 +1,110 @@
-from typing import List, Dict, Optional
-from .schemas import JurisdictionContext, JurisdictionResolution
-from verifhir.regulations.loader import load_adequacy_snapshot
+import os
+import json
+from typing import List, Optional
+from verifhir.jurisdiction.schemas import JurisdictionContext, JurisdictionResolution
 
+# --- CONFIGURATION ---
+SNAPSHOT_DIR = os.path.join(os.path.dirname(__file__), "..", "regulations", "snapshots")
+DEFAULT_SNAPSHOT = "adequacy_v2.json"
 
-# Architectural policy: deterministic strictness hierarchy
-# Top = most restrictive = governing regulation
-RESTRICTIVENESS_ORDER = ["GDPR", "HIPAA", "DPDP"]
+# UPDATED: Global Hierarchy (Most Restrictive -> Least)
+RESTRICTIVENESS_ORDER = [
+    "GDPR",
+    "UK_GDPR",
+    "LGPD",
+    "HIPAA",
+    "PIPEDA",
+    "APPI",
+    "POPIA",
+    "UAE_PDPL",
+    "MY_HEALTH_RECORDS_AU",
+    "DPDP"
+]
 
+def _load_snapshot(filename: str) -> dict:
+    path = os.path.join(SNAPSHOT_DIR, filename)
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Regulation snapshot not found: {path}")
+    with open(path, "r") as f:
+        return json.load(f)
 
 def resolve_jurisdiction(
     source_country: str,
     destination_country: str,
     data_subject_country: str,
-    intermediate_countries: Optional[List[str]] = None
+    snapshot_version: str = DEFAULT_SNAPSHOT
 ) -> JurisdictionResolution:
-    """
-    Resolve applicable and governing regulatory frameworks using a
-    versioned adequacy snapshot. Deterministic, explainable, auditable.
-    """
+    
+    snapshot = _load_snapshot(snapshot_version)
+    regs_db = snapshot["regulations"]
+    
+    applicable = set()
+    reasoning = {}
 
-    if intermediate_countries is None:
-        intermediate_countries = []
+    # --- 1. DETECT APPLICABLE REGULATIONS ---
+    # Note: Explicit checks used for transparency. 
+    # In production, this would loop through regs_db.items().
 
-    # 1. Load versioned policy snapshot
-    snapshot = load_adequacy_snapshot("adequacy_v1.json")
-    frameworks = snapshot["frameworks"]
+    # GDPR (EU Residents)
+    if data_subject_country in regs_db["GDPR"]["countries"]:
+        applicable.add("GDPR")
+        reasoning["GDPR"] = "EU residency triggers GDPR scope."
 
-    # 2. Extract regulatory scopes from snapshot
-    gdpr_countries = set(frameworks["GDPR"]["countries"])
-    hipaa_countries = set(frameworks["HIPAA"]["countries"])
-    dpdp_countries = set(frameworks["DPDP"]["countries"])
+    # UK GDPR (GB Residents)
+    if data_subject_country in regs_db["UK_GDPR"]["countries"]:
+        applicable.add("UK_GDPR")
+        reasoning["UK_GDPR"] = "UK residency triggers UK GDPR scope."
 
-    # All jurisdictions touched by the transfer
-    touch_points = {source_country, destination_country}
-    touch_points.update(intermediate_countries)
+    # HIPAA (US Origin)
+    if source_country == "US":
+        applicable.add("HIPAA")
+        reasoning["HIPAA"] = "US origin implies HIPAA covered entity context."
 
-    applicable: List[str] = []
-    reasoning: Dict[str, str] = {}
+    # DPDP (India Processing)
+    if destination_country == "IN" or source_country == "IN":
+        applicable.add("DPDP")
+        reasoning["DPDP"] = "Processing within India triggers DPDP Act."
+        
+    # PIPEDA (Canada)
+    if data_subject_country == "CA" or destination_country == "CA":
+        applicable.add("PIPEDA")
+        reasoning["PIPEDA"] = "Canadian commercial data context."
 
-    # 3. Regulation triggers (cumulative)
+    # LGPD (Brazil)
+    if data_subject_country == "BR" or destination_country == "BR":
+        applicable.add("LGPD")
+        reasoning["LGPD"] = "Brazilian data processing context."
 
-    # GDPR — residency based (MVP scope)
-    if data_subject_country in gdpr_countries:
-        applicable.append("GDPR")
-        reasoning["GDPR"] = frameworks["GDPR"]["notes"]
+    # --- TIER 2 (Scope Only) ---
+    if data_subject_country == "JP" or destination_country == "JP":
+        applicable.add("APPI")
+        reasoning["APPI"] = "Japanese personal information scope."
 
-    # HIPAA — US healthcare origin
-    if source_country in hipaa_countries:
-        if "HIPAA" not in applicable:
-            applicable.append("HIPAA")
-            reasoning["HIPAA"] = frameworks["HIPAA"]["notes"]
+    if data_subject_country == "ZA" or destination_country == "ZA":
+        applicable.add("POPIA")
+        reasoning["POPIA"] = "South African data subject scope."
 
-    # DPDP — any touchpoint involving India
-    if not dpdp_countries.isdisjoint(touch_points):
-        if "DPDP" not in applicable:
-            applicable.append("DPDP")
-            reasoning["DPDP"] = frameworks["DPDP"]["notes"]
+    if destination_country == "AE":
+        applicable.add("UAE_PDPL")
+        reasoning["UAE_PDPL"] = "UAE processing context."
 
-    # 4. Determine governing regulation (most restrictive wins)
-    governing: Optional[str] = None
+    if data_subject_country == "AU":
+        applicable.add("MY_HEALTH_RECORDS_AU")
+        reasoning["MY_HEALTH_RECORDS_AU"] = "Australian health record context."
 
-    for rule in RESTRICTIVENESS_ORDER:
-        if rule in applicable:
-            governing = rule
-            break
-
-    # Defensive fallback (future-proofing)
-    if governing is None and applicable:
-        governing = applicable[0]
-
-    # Normalize order for deterministic output
-    applicable = sorted(applicable)
+    # --- 2. DETERMINE GOVERNING REGULATION ---
+    sorted_regs = sorted(
+        list(applicable),
+        key=lambda r: RESTRICTIVENESS_ORDER.index(r) if r in RESTRICTIVENESS_ORDER else 99
+    )
+    
+    # CRITICAL FIX: Return None if no regulation applies, do not guess "UNCERTAIN"
+    governing = sorted_regs[0] if sorted_regs else None
 
     return JurisdictionResolution(
-        context=JurisdictionContext(
-            source_country=source_country,
-            destination_country=destination_country,
-            data_subject_country=data_subject_country,
-            intermediate_countries=intermediate_countries
-        ),
-        applicable_regulations=applicable,
+        context=JurisdictionContext(source_country, destination_country, data_subject_country),
+        applicable_regulations=sorted_regs,
         reasoning=reasoning,
-        regulation_snapshot_version=snapshot["snapshot_version"],
+        regulation_snapshot_version=snapshot_version,
         governing_regulation=governing
     )
