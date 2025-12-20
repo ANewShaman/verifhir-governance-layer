@@ -1,0 +1,29 @@
+{
+  "version": "1.0",
+  "frameworks": {
+    "GDPR": {
+      "countries": ["DE", "FR", "ES", "IT", "NL", "SE", "PL", "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "GR", "HU", "IE", "LV", "LT", "LU", "MT", "PT", "RO", "SK", "SI"]
+    },
+    "UK_GDPR": {
+      "countries": ["GB"]
+    },
+    "HIPAA": {
+      "countries": ["US"]
+    },
+    "DPDP": {
+      "countries": ["IN"]
+    },
+    "LGPD": {
+      "countries": ["BR"]
+    },
+    "PIPEDA": {
+      "countries": ["CA"]
+    },
+    "APPI": {
+      "countries": ["JP"]
+    },
+    "POPIA": {
+      "countries": ["ZA"]
+    }
+  }
+}

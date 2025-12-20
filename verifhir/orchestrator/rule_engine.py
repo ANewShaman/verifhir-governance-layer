@@ -1,50 +1,26 @@
-from typing import List
-from verifhir.jurisdiction.schemas import JurisdictionResolution
-from verifhir.models.violation import Violation
-from verifhir.rules.lgpd_free_text_identifier_rule import LGPDFreeTextIdentifierRule
-# Import standard rules
-from verifhir.rules.gdpr_free_text_identifier_rule import GDPRFreeTextIdentifierRule
-from verifhir.rules.hipaa_identifier_rule import HIPAAIdentifierRule
-from verifhir.rules.dpdp_data_principal_rule import DPDPDataPrincipalRule
+from typing import Dict, Any, List, Optional
 
-# Import Tier 1 regulation rules (Intermediary Hardening)
-from verifhir.rules.uk_gdpr_free_text_identifier_rule import UKGDPRFreeTextIdentifierRule
-from verifhir.rules.pipeda_free_text_identifier_rule import PIPEDAFreeTextIdentifierRule
+# Global variable to hold the singleton instance
+_engine_instance = None
 
-def run_deterministic_rules(jurisdiction: JurisdictionResolution, resource: dict) -> List[Violation]:
+def get_engine():
     """
-    Orchestrates the execution of deterministic compliance rules.
-    
-    1. Selects rules based on the jurisdiction context.
-    2. Runs each rule against the provided FHIR resource.
-    3. Aggregates all detected violations.
-    
-    Args:
-        jurisdiction: The resolved jurisdiction context (Week 1 output).
-        resource: The FHIR resource to scan (e.g., Observation, Patient).
-        
-    Returns:
-        List[Violation]: A flat list of all deterministic violations found.
+    Lazy loader for the engine. 
+    Only imports and creates the class when absolutely necessary.
     """
-    
-    all_violations: List[Violation] = []
+    global _engine_instance
+    if _engine_instance is None:
+        # Import INSIDE the function to avoid circular dependency crashes
+        # ENSURE the file in verifhir/rules/ is named 'rules_wrapper.py'
+        from verifhir.rules.rules_wrapper import DeterministicRuleEngine
+        _engine_instance = DeterministicRuleEngine()
+    return _engine_instance
 
-    # Registry of all available deterministic rules.
-    # Rules internally check 'jurisdiction.applicable_regulations' 
-    # and skip execution if they don't apply.
-    active_rules = [
-    GDPRFreeTextIdentifierRule(jurisdiction),
-    HIPAAIdentifierRule(jurisdiction),
-    DPDPDataPrincipalRule(jurisdiction),
-    UKGDPRFreeTextIdentifierRule(jurisdiction),
-    PIPEDAFreeTextIdentifierRule(jurisdiction),
-    LGPDFreeTextIdentifierRule(jurisdiction) # <--- ADD THIS LINE
-]
-
-    # Execute each rule
-    for rule in active_rules:
-        # Rules returns an empty list [] if not applicable
-        found_violations = rule.evaluate(resource)
-        all_violations.extend(found_violations)
-
-    return all_violations
+def run_deterministic_rules(jurisdiction_resolution: Any, fhir_resource: Dict[str, Any]) -> List[Dict]:
+    """
+    COMPATIBILITY BRIDGE
+    --------------------
+    The old tests call this function. We redirect them to the new Class.
+    """
+    engine = get_engine()
+    return engine.evaluate(fhir_resource, jurisdiction_resolution)

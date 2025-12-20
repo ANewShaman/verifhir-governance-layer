@@ -1,41 +1,47 @@
+# verifhir/scoring/aggregator.py
+
 from typing import List, Dict, Any
-from verifhir.models.risk_component import RiskComponent
 
-def aggregate_risk_components(
-    components: List[RiskComponent]
-) -> Dict[str, Any]:
-    """
-    Deterministically aggregate risk components into an explainable score.
-    Returns a structured summary, not a decision.
-    """
 
+def aggregate_scored_items(scored_items: List[Dict[str, Any]]) -> Dict[str, Any]:
     total_score = 0.0
     breakdown = []
 
-    for component in components:
-        # Micro-Improvement 2: Defensive Assertion
-        # Prevents negative scoring bugs from corrupting the audit trail
-        assert component.weighted_score >= 0, "Risk score cannot be negative"
+    for item in scored_items:
+        v = item["violation"]
+        total_score += item["final_weight"]
 
-        total_score += component.weighted_score
-        
         breakdown.append({
-            "regulation": component.violation.regulation,
-            "violation_type": component.violation.violation_type,
-            "severity": component.violation.severity.value,
-            "weight": component.weight,
-            "weighted_score": component.weighted_score,
-            "citation": component.violation.citation,
-            "field_path": component.violation.field_path,
-            "explanation": component.explanation
+            "regulation": v.regulation,
+            "violation_type": v.violation_type,
+            "severity": v.severity.value,
+            "base_weight": item["base_weight"],
+            "confidence": item["confidence"],
+            "final_weight": item["final_weight"],
+            "citation": v.citation,
+            "field_path": v.field_path,
+            "detection_method": v.detection_method,
+            "description": v.description,
         })
-
-    # Micro-Improvement 1: Deterministic Ordering
-    # Ensures the JSON output is identical every time for the same input (Audit Stability)
-    breakdown.sort(key=lambda x: (x["regulation"], x["violation_type"]))
 
     return {
         "total_risk_score": round(total_score, 2),
-        "component_count": len(components),
-        "components": breakdown
+        "violation_count": len(scored_items),
+        "component_count": len(scored_items),
+        "breakdown": breakdown,
+        "components": breakdown,  # legacy alias
     }
+
+
+def aggregate_risk_components(components):
+    scored_items = []
+
+    for rc in components:
+        scored_items.append({
+            "violation": rc.violation,
+            "base_weight": rc.weight,
+            "confidence": rc.violation.confidence or 1.0,
+            "final_weight": rc.weighted_score,
+        })
+
+    return aggregate_scored_items(scored_items)

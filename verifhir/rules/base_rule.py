@@ -1,21 +1,19 @@
+# verifhir/rules/base_rule.py
+
 from abc import ABC, abstractmethod
-from typing import List
-from verifhir.jurisdiction.schemas import JurisdictionResolution
+from typing import List, Optional
+
+# IMPORTS MUST MATCH YOUR FILES:
+# 1. Import JurisdictionResolution from 'verifhir.jurisdiction.models'
+from verifhir.jurisdiction.models import JurisdictionResolution 
+
+# 2. Import Violation from 'verifhir.models.violation'
 from verifhir.models.violation import Violation
 
 class ComplianceRule(ABC):
-    """
-    The abstract parent for ALL governance rules.
-    Ensures every rule has access to context and implements 'evaluate'.
-    """
-
-    def __init__(self, context: JurisdictionResolution):
+    def __init__(self, context: Optional[JurisdictionResolution] = None):
         self.context = context
 
     @abstractmethod
     def evaluate(self, resource: dict) -> List[Violation]:
-        """
-        Check the resource for non-compliance.
-        Returns a list of Violations (empty list if compliant).
-        """
         pass
