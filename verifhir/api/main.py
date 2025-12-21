@@ -9,7 +9,7 @@ from verifhir.orchestrator.rule_engine import run_deterministic_rules
 from verifhir.decision.judge import DecisionEngine
 from verifhir.explainability.mapper import explain_violations
 
-# --- 1. SETUP AUDIT LOGGING (Option 2) ---
+# --- 1. SETUP AUDIT LOGGING ---
 logging.basicConfig(
     filename="audit.log",
     level=logging.INFO,
@@ -17,11 +17,11 @@ logging.basicConfig(
 )
 audit_logger = logging.getLogger("audit")
 
-# --- 2. VISUAL POLISH (Option 1) ---
+# --- 2. VISUAL POLISH (Swagger UI Metadata) ---
 tags_metadata = [
     {
         "name": "Verification",
-        "description": "Core compliance logic. Submits data to the **Hybrid Engine** (Rules + ML) for risk scoring.",
+        "description": "Core logic. Submits data to the **Hybrid Engine** (Rules + ML).",
     },
     {
         "name": "System",
@@ -34,10 +34,9 @@ app = FastAPI(
     description="""
     **Enterprise Compliance Layer** for FHIR Datasets.
     
-    This API automates risk scoring using a hybrid approach:
-    * **Deterministic Rules:** 100% confidence checks for known patterns (e.g., regex).
-    * **ML Inference:** Probabilistic detection for context-dependent PII (e.g., Names).
-    * **Risk Decision:** A weighted scoring engine that issues `APPROVED`, `REJECTED`, or `NEEDS_REVIEW` verdicts.
+    Automated risk scoring using a hybrid approach:
+    * **Deterministic Rules:** 100% confidence checks.
+    * **Risk Decision:** Weighted scoring engine (Approved / Rejected / Needs Review).
     """,
     version="1.0.0",
     openapi_tags=tags_metadata,
@@ -45,24 +44,18 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# --- 3. MIDDLEWARE: THE AUDITOR ---
+# --- 3. MIDDLEWARE: AUDIT TRAIL ---
 @app.middleware("http")
 async def audit_middleware(request: Request, call_next):
     start_time = time.time()
-    
-    # Process Request
     response = await call_next(request)
-    
-    # Calculate duration
     process_time = time.time() - start_time
     
-    # Log to file (Audit Trail)
     audit_logger.info(
         f"METHOD={request.method} PATH={request.url.path} "
         f"STATUS={response.status_code} CLIENT={request.client.host} "
         f"DURATION={process_time:.4f}s"
     )
-    
     return response
 
 # --- DATA MODELS ---
@@ -87,15 +80,12 @@ class ComplianceResponse(BaseModel):
 
 # --- ADAPTER (The Fix for Legacy Rules) ---
 class PolicyAdapter:
-    """
-    Wraps the Pydantic PolicyRequest to ensure legacy rules 
-    can find attributes where they expect them.
-    """
+    """Wraps Pydantic PolicyRequest for legacy rules."""
     def __init__(self, pydantic_policy: PolicyRequest):
         self.governing_regulation = pydantic_policy.governing_regulation
         self.regulation_citation = pydantic_policy.regulation_citation
         self.context = pydantic_policy.context
-        # BRIDGE: Flatten context attributes for legacy rules
+        # The Bridge that fixes the crash:
         self.applicable_regulations = pydantic_policy.context.applicable_regulations
 
 # --- ENDPOINTS ---
@@ -129,11 +119,8 @@ def verify_resource(request: VerifyRequest):
 
     except Exception as e:
         audit_logger.error(f"ENGINE_ERROR: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Governance Engine Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health", tags=["System"])
 def health():
-    """
-    Operational heartbeat check.
-    """
     return {"status": "online", "modules": ["Rules", "ML", "Judge", "AuditLog"]}

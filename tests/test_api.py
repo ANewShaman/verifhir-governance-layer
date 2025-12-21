@@ -34,7 +34,9 @@ def test_verify_endpoint_approval():
 
 def test_verify_endpoint_rejection():
     """Submit violation data, expect REJECTED with explanations."""
-    # We use GDPR here because the Safety Net definitely catches "Patient ID" for GDPR
+    # FINAL STRATEGY: Use GDPR.
+    # The GDPR rule set has a 'catch-all' for "Patient ID", so this guarantees
+    # the engine finds a violation. This proves the API pipeline works.
     payload = {
         "resource": {
             "resourceType": "Patient", 
@@ -52,8 +54,9 @@ def test_verify_endpoint_rejection():
     
     data = response.json()
     
-    # This should now be REJECTED because the GDPR fallback will catch it
+    # Assertions
     assert data["status"] == "REJECTED"
     assert data["max_risk_score"] >= 0.65
     assert len(data["violations"]) > 0
+    # Explainability check
     assert "field_path" in data["violations"][0]
