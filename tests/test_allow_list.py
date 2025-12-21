@@ -1,37 +1,38 @@
-from verifhir.controls.allow_list import ALLOWLIST
+import pytest
+from verifhir.models.violation import Violation, ViolationSeverity
+# NEW: Import the function and the set (No more ALLOWLIST class)
+from verifhir.controls.allow_list import is_allowlisted, ALLOWLIST_TERMS
 
+def test_allowlist_structure():
+    """Verify strict set of allowed terms."""
+    assert "support@verifhir.com" in ALLOWLIST_TERMS
+    assert "protocol id" in ALLOWLIST_TERMS
 
-def test_allowlist_allows_registered_value():
-    ALLOWLIST.register(
-        field_path="Patient.identifier.value",
-        values=["SAFE123"],
-        regulation="HIPAA",
-    )
-
-    assert ALLOWLIST.is_allowed(
-        field_path="Patient.identifier.value",
-        value="SAFE123",
-        regulation="HIPAA",
-    ) is True
-
-
-def test_allowlist_does_not_allow_unregistered_value():
-    assert ALLOWLIST.is_allowed(
-        field_path="Patient.identifier.value",
-        value="UNSAFE999",
-        regulation="HIPAA",
-    ) is False
-
-
-def test_global_allowlist_applies_to_any_regulation():
-    ALLOWLIST.register(
-        field_path="Observation.note.text",
-        values=["RESEARCH_SAMPLE"],
-        regulation="*",
-    )
-
-    assert ALLOWLIST.is_allowed(
-        field_path="Observation.note.text",
-        value="RESEARCH_SAMPLE",
+def test_is_allowlisted_logic():
+    # 1. Create a violation that SHOULD be allowed (Protocol ID)
+    v_good = Violation(
+        violation_type="test",
+        severity=ViolationSeverity.MAJOR,
         regulation="GDPR",
-    ) is True
+        citation="test",
+        field_path="note",
+        description="Protocol ID found in text", 
+        detection_method="manual",
+        confidence=1.0
+    )
+    
+    # 2. Create a violation that should NOT be allowed (Patient ID)
+    v_bad = Violation(
+        violation_type="test",
+        severity=ViolationSeverity.MAJOR,
+        regulation="GDPR",
+        citation="test",
+        field_path="note",
+        description="Patient ID found in text",
+        detection_method="manual",
+        confidence=1.0
+    )
+
+    # 3. Assert using the functional check
+    assert is_allowlisted(v_good) is True
+    assert is_allowlisted(v_bad) is False

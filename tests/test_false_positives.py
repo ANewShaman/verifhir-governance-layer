@@ -1,32 +1,29 @@
-from verifhir.controls.false_positives import FALSE_POSITIVES
-from verifhir.models.violation import Violation
+import pytest
+from verifhir.models.violation import Violation, ViolationSeverity
+# NEW: Import the function (No more FALSE_POSITIVES class)
+from verifhir.controls.false_positives import is_false_positive
 
-
-def test_false_positive_is_suppressed():
+def test_false_positive_page_logic():
+    """Verify 'Page 12' is flagged as a false positive."""
+    
+    # 1. Mock Violation
     v = Violation(
-        regulation="HIPAA",
-        violation_type="IDENTIFIER",
-        citation="45 CFR §164.502",
-        field_path="Patient.identifier.value",
-        description="TEST patient identifier",
-        severity="MINOR",
-        detection_method="presidio_augmented",
-        confidence=0.9,
+        violation_type="GDPR_IDENTIFIER",
+        severity=ViolationSeverity.MAJOR,
+        regulation="GDPR",
+        citation="test",
+        field_path="note",
+        description="Patient ID detected",
+        detection_method="manual",
+        confidence=1.0
     )
 
-    assert FALSE_POSITIVES.should_suppress(v) is True
+    # 2. Context: "Page 12 of 50" (Safe)
+    resource_safe = {"text": "Refer to Page 12 of the manual."}
+    
+    # 3. Context: "Patient 12" (Unsafe)
+    resource_unsafe = {"text": "Patient 12 reported symptoms."}
 
-
-def test_real_violation_is_not_suppressed():
-    v = Violation(
-        regulation="HIPAA",
-        violation_type="IDENTIFIER",
-        citation="45 CFR §164.502",
-        field_path="Patient.identifier.value",
-        description="Real patient identifier",
-        severity="MAJOR",
-        detection_method="rule",
-        confidence=1.0,
-    )
-
-    assert FALSE_POSITIVES.should_suppress(v) is False
+    # 4. Assert
+    assert is_false_positive(v, resource_safe) is True
+    assert is_false_positive(v, resource_unsafe) is False
