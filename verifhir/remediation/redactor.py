@@ -1,35 +1,48 @@
 import os
 import logging
 import datetime
-from typing import Dict, Optional, Any
+import json
+from typing import Dict, Any, Optional
+from dotenv import load_dotenv
 from openai import AzureOpenAI, APIError
 
-# --- THE FIX: Load the .env file ---
-from dotenv import load_dotenv
-load_dotenv()  # This reads your .env file and sets the variables!
-# -----------------------------------
+# --- DAY 23 UPGRADES ---
+from opencensus.ext.azure.log_exporter import AzureLogHandler
+from verifhir.remediation.fallback import RegexFallbackEngine
+
+load_dotenv()
 
 class RedactionEngine:
     """
-    ASSISTIVE COMPLIANCE MODULE: Redaction Suggestion Engine.
+    ASSISTIVE COMPLIANCE MODULE (Hybrid AI + Regex).
     """
-
     PROMPT_VERSION = "v1.0-2025" 
 
     def __init__(self):
         self.logger = logging.getLogger("verifhir.remediation")
-        self.client: Optional[AzureOpenAI] = None
+        self.logger.setLevel(logging.INFO)
         
-        # 1. Configuration & Safety Checks
+        # 1. TELEMETRY SETUP (Azure App Insights)
+        # If connection string exists, logs go to Cloud Dashboard. If not, console only.
+        app_insights_conn = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
+        if app_insights_conn:
+            self.logger.addHandler(AzureLogHandler(connection_string=app_insights_conn))
+            self.telemetry_enabled = True
+        else:
+            self.telemetry_enabled = False
+
+        # 2. CLIENT SETUP
+        self.client: Optional[AzureOpenAI] = None
         self.api_key = os.getenv("AZURE_OPENAI_KEY")
         self.endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
         self.deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
+        
+        # 3. FALLBACK ENGINE (The Safety Net)
+        self.fallback_engine = RegexFallbackEngine()
 
-        # 2. Connection Initialization
         self._initialize_client()
 
     def _initialize_client(self):
-        """Attempts to establish a secure connection to Azure OpenAI."""
         if self.api_key and self.endpoint:
             try:
                 self.client = AzureOpenAI(
@@ -37,118 +50,91 @@ class RedactionEngine:
                     api_version="2024-02-15-preview",
                     azure_endpoint=self.endpoint
                 )
-                self.logger.info("RedactionEngine online. Connected to Azure OpenAI.")
+                self.logger.info("RedactionEngine online. Mode: Hybrid (AI + Regex Fallback).")
             except Exception as e:
-                self.logger.error(f"Initialization Failed: {e}. Engine entering FAIL-SAFE mode.")
+                self.logger.error(f"Init Failed: {e}. Degrading to REGEX ONLY mode.")
         else:
-            self.logger.warning("Missing Azure credentials. Engine entering FAIL-SAFE mode (Mock).")
+            self.logger.warning("No Credentials. Degrading to REGEX ONLY mode.")
 
     def generate_suggestion(self, text: str, regulation: str, country: str = "US") -> Dict[str, Any]:
         """
-        Generates a draft redaction for human review.
+        Tries AI first. If it fails, falls back to Regex.
         """
-        # Safety Check: Empty input
+        # Safety: Empty check
         if not text or not text.strip():
-            return self._create_response(text, text, "No-Op (Empty Input)")
+            return self._create_response(text, text, "No-Op", {})
 
-        # Fail-Safe: Offline Mode
-        if not self.client:
-            return self._mock_redaction_fallback(text, reason="Service Offline")
+        # 1. AI PATH
+        if self.client:
+            try:
+                start_time = datetime.datetime.now(datetime.timezone.utc)
+                
+                # --- TELEMETRY: Log Attempt ---
+                # We log custom properties so you can graph "AI vs Fallback" later
+                extra_props = {"custom_dimensions": {"method": "AI", "regulation": regulation}}
+                
+                response = self.client.chat.completions.create(
+                    model=self.deployment,
+                    messages=[
+                        {"role": "system", "content": self._build_system_instruction(regulation, country)},
+                        {"role": "user", "content": f"INPUT TEXT:\n{text}"}
+                    ],
+                    temperature=0.0,
+                    max_tokens=1000
+                )
+                suggestion = response.choices[0].message.content.strip()
+                
+                self.logger.info(f"AI Redaction Success", extra=extra_props)
 
-        try:
-            # 3. Construct Governance-Aligned Prompt
-            system_instruction = self._build_system_instruction(regulation, country)
-            
-            # 4. Execute AI Inference (Strict/Deterministic)
-            start_time = datetime.datetime.now(datetime.timezone.utc)
-            
-            response = self.client.chat.completions.create(
-                model=self.deployment,
-                messages=[
-                    {"role": "system", "content": system_instruction},
-                    {"role": "user", "content": f"INPUT TEXT:\n{text}"}
-                ],
-                temperature=0.0, # Zero creativity required for compliance
-                max_tokens=1000, # Safety limit
-                top_p=0.1
-            )
-            
-            suggestion = response.choices[0].message.content.strip()
-            
-            self.logger.info(f"Generated suggestion for regulation={regulation} model={self.deployment}")
+                return self._create_response(
+                    original=text,
+                    suggestion=suggestion,
+                    method=f"Azure OpenAI ({self.deployment})",
+                    audit_info={"timestamp": start_time.isoformat(), "source": "AI"}
+                )
 
-            return self._create_response(
-                original=text,
-                suggestion=suggestion,
-                method=f"Azure OpenAI ({self.deployment})",
-                audit_info={
-                    "prompt_version": self.PROMPT_VERSION,
-                    "timestamp": start_time.isoformat(),
-                    "regulation_context": regulation
-                }
-            )
+            except Exception as e:
+                # 2. FAILURE TRIGGER
+                self.logger.error(f"AI Failure: {e}. Triggering Fallback.", extra={"custom_dimensions": {"error": str(e)}})
+                return self._execute_fallback(text, reason=str(e))
+        
+        # 3. OFFLINE PATH
+        return self._execute_fallback(text, reason="Service Offline")
 
-        except APIError as e:
-            self.logger.error(f"Azure API Error: {e}. Reverting to fallback.")
-            return self._mock_redaction_fallback(text, reason="Provider API Error")
-        except Exception as e:
-            self.logger.error(f"Unexpected Redaction Error: {e}. Reverting to fallback.")
-            return self._mock_redaction_fallback(text, reason="Internal Error")
-
-    def _build_system_instruction(self, regulation: str, country: str) -> str:
+    def _execute_fallback(self, text: str, reason: str) -> Dict[str, Any]:
         """
-        Constructs the 'System Prompt' with strict bounding instructions.
+        Day 23: The logic that runs when the brain dies.
         """
-        base_instruction = (
-            "You are a Compliance Assistant. Your task is to redact PII (Personally Identifiable Information) "
-            "from the provided text. You must act conservatively and efficiently."
+        # Run the Regex Engine
+        safe_text, rules_applied = self.fallback_engine.redact(text)
+        
+        # --- TELEMETRY: Log Fallback ---
+        self.logger.warning(
+            f"Fallback Executed", 
+            extra={"custom_dimensions": {"method": "Fallback", "rules": str(rules_applied)}}
         )
 
-        if regulation == "HIPAA":
-            return (
-                f"{base_instruction}\n"
-                "CONTEXT: HIPAA Privacy Rule (USA).\n"
-                "INSTRUCTION: Redact all 18 identifiers defined by HIPAA (names, dates, locations smaller than state, IDs).\n"
-                "FORMAT: Replace identifiers with '[REDACTED]'.\n"
-                "CONSTRAINT: Do not summarize. Do not explain. Return ONLY the redacted text."
-            )
-        elif regulation == "GDPR":
-            return (
-                f"{base_instruction}\n"
-                "CONTEXT: GDPR (EU), Subject Jurisdiction: {country}.\n"
-                "INSTRUCTION: Apply Data Minimization. Redact direct identifiers (Name, SSN/ID).\n"
-                "GUIDANCE: Pseudonymize where possible to preserve context (e.g., change 'John' to 'Patient A').\n"
-                "CONSTRAINT: Do not summarize. Do not explain. Return ONLY the redacted text."
-            )
-        else:
-            return (
-                f"{base_instruction}\n"
-                "INSTRUCTION: Remove all standard PII (Names, Emails, Phones, IDs).\n"
-                "FORMAT: Replace with '[REDACTED]'.\n"
-                "CONSTRAINT: Return ONLY the redacted text."
-            )
-
-    def _mock_redaction_fallback(self, text: str, reason: str) -> Dict[str, Any]:
-        """
-        Deterministic fallback when AI is unavailable.
-        """
-        self.logger.warning(f"Using Mock Redaction. Reason: {reason}")
-        
-        safe_text = text.replace("99999", "[REDACTED-ID]").replace("John Doe", "[REDACTED-NAME]")
-        
         return self._create_response(
             original=text,
             suggestion=safe_text,
-            method=f"Static Fallback ({reason})",
-            audit_info={"note": "AI Unavailable - Manual Review Recommended"}
+            method="Regex Safety Net",
+            audit_info={
+                "note": "AI Unavailable - Reverted to Strict Rules",
+                "failure_reason": reason,
+                "rules_applied": rules_applied
+            }
         )
 
-    def _create_response(self, original: str, suggestion: str, method: str, audit_info: Optional[Dict] = None) -> Dict[str, Any]:
-        """Standardizes the output format."""
+    def _build_system_instruction(self, regulation: str, country: str) -> str:
+        # (Keep your existing prompt logic from Day 22 here)
+        # For brevity in this snippet, I am abbreviating, but KEEP YOUR LOGIC.
+        return f"You are a Compliance Bot. Enforce {regulation}."
+
+    def _create_response(self, original: str, suggestion: str, method: str, audit_info: Dict) -> Dict[str, Any]:
         return {
             "original_text": original,
             "suggested_redaction": suggestion,
             "remediation_method": method,
-            "is_authoritative": False, 
-            "audit_metadata": audit_info or {}
+            "is_authoritative": False,
+            "audit_metadata": audit_info
         }
