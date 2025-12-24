@@ -1,45 +1,26 @@
 import os
 import logging
 import datetime
-import json
+import re
 from typing import Dict, Any, Optional
 from dotenv import load_dotenv
-from openai import AzureOpenAI, APIError
-
-# --- DAY 23 UPGRADES ---
-from opencensus.ext.azure.log_exporter import AzureLogHandler
+from openai import AzureOpenAI
 from verifhir.remediation.fallback import RegexFallbackEngine
 
 load_dotenv()
 
 class RedactionEngine:
-    """
-    ASSISTIVE COMPLIANCE MODULE (Hybrid AI + Regex).
-    """
-    PROMPT_VERSION = "v1.0-2025" 
+    PROMPT_VERSION = "v3.1-ALIGNED" 
+    # Canary now mimics a real ID to trigger natural model redaction
+    CANARY_TOKEN = "REF-ID-999-00-9999"
 
     def __init__(self):
         self.logger = logging.getLogger("verifhir.remediation")
-        self.logger.setLevel(logging.INFO)
-        
-        # 1. TELEMETRY SETUP (Azure App Insights)
-        # If connection string exists, logs go to Cloud Dashboard. If not, console only.
-        app_insights_conn = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
-        if app_insights_conn:
-            self.logger.addHandler(AzureLogHandler(connection_string=app_insights_conn))
-            self.telemetry_enabled = True
-        else:
-            self.telemetry_enabled = False
-
-        # 2. CLIENT SETUP
-        self.client: Optional[AzureOpenAI] = None
+        self.client = None
         self.api_key = os.getenv("AZURE_OPENAI_KEY")
         self.endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
         self.deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
-        
-        # 3. FALLBACK ENGINE (The Safety Net)
         self.fallback_engine = RegexFallbackEngine()
-
         self._initialize_client()
 
     def _initialize_client(self):
@@ -50,91 +31,60 @@ class RedactionEngine:
                     api_version="2024-02-15-preview",
                     azure_endpoint=self.endpoint
                 )
-                self.logger.info("RedactionEngine online. Mode: Hybrid (AI + Regex Fallback).")
             except Exception as e:
-                self.logger.error(f"Init Failed: {e}. Degrading to REGEX ONLY mode.")
-        else:
-            self.logger.warning("No Credentials. Degrading to REGEX ONLY mode.")
+                self.logger.error(f"Init Failed: {e}")
 
     def generate_suggestion(self, text: str, regulation: str, country: str = "US") -> Dict[str, Any]:
-        """
-        Tries AI first. If it fails, falls back to Regex.
-        """
-        # Safety: Empty check
         if not text or not text.strip():
             return self._create_response(text, text, "No-Op", {})
 
-        # 1. AI PATH
         if self.client:
             try:
                 start_time = datetime.datetime.now(datetime.timezone.utc)
-                
-                # --- TELEMETRY: Log Attempt ---
-                # We log custom properties so you can graph "AI vs Fallback" later
-                extra_props = {"custom_dimensions": {"method": "AI", "regulation": regulation}}
+                augmented_text = f"{text}\n\n[System ID: {self.CANARY_TOKEN}]"
                 
                 response = self.client.chat.completions.create(
                     model=self.deployment,
                     messages=[
                         {"role": "system", "content": self._build_system_instruction(regulation, country)},
-                        {"role": "user", "content": f"INPUT TEXT:\n{text}"}
+                        # Anchor examples teach the model exactly how to align redacted tags
+                        {"role": "user", "content": "Text: Jane Doe, +91 9876543210, 123 Main St, NY 10001."},
+                        {"role": "assistant", "content": "[REDACTED NAME], [REDACTED PHONE], [REDACTED ADDRESS]."},
+                        {"role": "user", "content": f"Text: {augmented_text}"}
                     ],
-                    temperature=0.0,
-                    max_tokens=1000
+                    temperature=0.0
                 )
-                suggestion = response.choices[0].message.content.strip()
                 
-                self.logger.info(f"AI Redaction Success", extra=extra_props)
+                raw_suggestion = response.choices[0].message.content.strip()
 
-                return self._create_response(
-                    original=text,
-                    suggestion=suggestion,
-                    method=f"Azure OpenAI ({self.deployment})",
-                    audit_info={"timestamp": start_time.isoformat(), "source": "AI"}
-                )
+                # Validation & Refusal Detection
+                if self.CANARY_TOKEN in raw_suggestion:
+                    return self._execute_fallback(text, "Canary Validation Failed")
+                
+                if re.search(r"(i am sorry|as an ai|policy violation)", raw_suggestion, re.I):
+                    return self._execute_fallback(text, "AI Filter Refusal")
+
+                # Remove conversational noise and canary artifacts
+                clean_suggestion = re.sub(r"^(here is|processed|redacted|text):.*?\n", "", raw_suggestion, flags=re.I | re.M).strip()
+                clean_suggestion = re.sub(r"\[System ID:.*\]", "", clean_suggestion).strip()
+
+                return self._create_response(text, clean_suggestion, f"Azure OpenAI ({self.deployment})", {"timestamp": start_time.isoformat()})
 
             except Exception as e:
-                # 2. FAILURE TRIGGER
-                self.logger.error(f"AI Failure: {e}. Triggering Fallback.", extra={"custom_dimensions": {"error": str(e)}})
-                return self._execute_fallback(text, reason=str(e))
+                return self._execute_fallback(text, str(e))
         
-        # 3. OFFLINE PATH
-        return self._execute_fallback(text, reason="Service Offline")
+        return self._execute_fallback(text, "Offline Mode")
 
-    def _execute_fallback(self, text: str, reason: str) -> Dict[str, Any]:
-        """
-        Day 23: The logic that runs when the brain dies.
-        """
-        # Run the Regex Engine
-        safe_text, rules_applied = self.fallback_engine.redact(text)
-        
-        # --- TELEMETRY: Log Fallback ---
-        self.logger.warning(
-            f"Fallback Executed", 
-            extra={"custom_dimensions": {"method": "Fallback", "rules": str(rules_applied)}}
+    def _build_system_instruction(self, reg, country):
+        return (
+            f"You are a clinical administrative assistant for {reg} ({country}) records. "
+            "Identify names, phone numbers (international), addresses, and emails. "
+            "Replace them with [REDACTED <TYPE>] tags. Provide the processed text only."
         )
 
-        return self._create_response(
-            original=text,
-            suggestion=safe_text,
-            method="Regex Safety Net",
-            audit_info={
-                "note": "AI Unavailable - Reverted to Strict Rules",
-                "failure_reason": reason,
-                "rules_applied": rules_applied
-            }
-        )
+    def _execute_fallback(self, text, reason):
+        safe_text, rules = self.fallback_engine.redact(text)
+        return self._create_response(text, safe_text, "Regex Fallback", {"reason": reason, "rules": rules})
 
-    def _build_system_instruction(self, regulation: str, country: str) -> str:
-        # (Keep your existing prompt logic from Day 22 here)
-        # For brevity in this snippet, I am abbreviating, but KEEP YOUR LOGIC.
-        return f"You are a Compliance Bot. Enforce {regulation}."
-
-    def _create_response(self, original: str, suggestion: str, method: str, audit_info: Dict) -> Dict[str, Any]:
-        return {
-            "original_text": original,
-            "suggested_redaction": suggestion,
-            "remediation_method": method,
-            "is_authoritative": False,
-            "audit_metadata": audit_info
-        }
+    def _create_response(self, original, suggestion, method, audit):
+        return {"original_text": original, "suggested_redaction": suggestion, "remediation_method": method, "audit_metadata": audit}
