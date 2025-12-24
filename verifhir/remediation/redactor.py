@@ -10,9 +10,13 @@ from verifhir.remediation.fallback import RegexFallbackEngine
 load_dotenv()
 
 class RedactionEngine:
-    PROMPT_VERSION = "v3.1-ALIGNED" 
-    # Canary now mimics a real ID to trigger natural model redaction
-    CANARY_TOKEN = "REF-ID-999-00-9999"
+    """
+    Optimized Clinical Redaction Engine.
+    Uses clinical-context steering to avoid Azure AI Safety refusals.
+    """
+    PROMPT_VERSION = "v3.2-OPTIMIZED" 
+    # Canary formatted as a real ID to trigger natural model redaction
+    CANARY_TOKEN = "PII-REF-999-00-9999"
 
     def __init__(self):
         self.logger = logging.getLogger("verifhir.remediation")
@@ -41,50 +45,52 @@ class RedactionEngine:
         if self.client:
             try:
                 start_time = datetime.datetime.now(datetime.timezone.utc)
-                augmented_text = f"{text}\n\n[System ID: {self.CANARY_TOKEN}]"
+                # Augmented text with canary to ensure compliance
+                augmented_text = f"{text}\n\n[Clinical System ID: {self.CANARY_TOKEN}]"
                 
                 response = self.client.chat.completions.create(
                     model=self.deployment,
                     messages=[
                         {"role": "system", "content": self._build_system_instruction(regulation, country)},
-                        # Anchor examples teach the model exactly how to align redacted tags
-                        {"role": "user", "content": "Text: Jane Doe, +91 9876543210, 123 Main St, NY 10001."},
+                        # FEW-SHOT ANCHOR: Teaches the model to align tags perfectly
+                        {"role": "user", "content": "Process: Jane Doe, +91 9876543210, 123 Maple St, NY 10001."},
                         {"role": "assistant", "content": "[REDACTED NAME], [REDACTED PHONE], [REDACTED ADDRESS]."},
-                        {"role": "user", "content": f"Text: {augmented_text}"}
+                        {"role": "user", "content": f"Process: {augmented_text}"}
                     ],
                     temperature=0.0
                 )
                 
                 raw_suggestion = response.choices[0].message.content.strip()
 
-                # Validation & Refusal Detection
+                # --- VALIDATION GATEWAY ---
                 if self.CANARY_TOKEN in raw_suggestion:
-                    return self._execute_fallback(text, "Canary Validation Failed")
-                
+                    return self._execute_fallback(text, "Compliance Check Failed")
+
                 if re.search(r"(i am sorry|as an ai|policy violation)", raw_suggestion, re.I):
-                    return self._execute_fallback(text, "AI Filter Refusal")
+                    return self._execute_fallback(text, "Safety Filter Refusal")
 
-                # Remove conversational noise and canary artifacts
+                # Remove conversational noise and the system ID line
                 clean_suggestion = re.sub(r"^(here is|processed|redacted|text):.*?\n", "", raw_suggestion, flags=re.I | re.M).strip()
-                clean_suggestion = re.sub(r"\[System ID:.*\]", "", clean_suggestion).strip()
+                clean_suggestion = re.sub(r"\[Clinical System ID:.*\]", "", clean_suggestion).strip()
 
-                return self._create_response(text, clean_suggestion, f"Azure OpenAI ({self.deployment})", {"timestamp": start_time.isoformat()})
+                return self._create_response(text, clean_suggestion, f"Azure OpenAI ({self.deployment})", {"time": start_time.isoformat()})
 
             except Exception as e:
-                return self._execute_fallback(text, str(e))
+                return self._execute_fallback(text, f"AI Error: {str(e)}")
         
-        return self._execute_fallback(text, "Offline Mode")
+        return self._execute_fallback(text, "Service Offline")
 
-    def _build_system_instruction(self, reg, country):
-        return (
-            f"You are a clinical administrative assistant for {reg} ({country}) records. "
-            "Identify names, phone numbers (international), addresses, and emails. "
-            "Replace them with [REDACTED <TYPE>] tags. Provide the processed text only."
-        )
-
-    def _execute_fallback(self, text, reason):
+    def _execute_fallback(self, text: str, reason: str) -> Dict[str, Any]:
         safe_text, rules = self.fallback_engine.redact(text)
         return self._create_response(text, safe_text, "Regex Fallback", {"reason": reason, "rules": rules})
+
+    def _build_system_instruction(self, regulation: str, country: str) -> str:
+        return (
+            f"You are a clinical assistant for {regulation} ({country}) compliance. "
+            "Your task is to identify and replace all PII (names, international phones, addresses, emails) "
+            "with standardized [REDACTED <TYPE>] tags. "
+            "Provide the processed text immediately without introductory remarks."
+        )
 
     def _create_response(self, original, suggestion, method, audit):
         return {"original_text": original, "suggested_redaction": suggestion, "remediation_method": method, "audit_metadata": audit}
