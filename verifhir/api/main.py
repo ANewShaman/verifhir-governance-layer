@@ -8,6 +8,8 @@ from pydantic import BaseModel
 from verifhir.orchestrator.rule_engine import run_deterministic_rules
 from verifhir.decision.judge import DecisionEngine
 from verifhir.explainability.mapper import explain_violations
+# --- DAY 25 IMPORT: CLOUD ALERTING ---
+from verifhir.integration.azure_alerts import trigger_high_risk_alert
 
 # --- 1. SETUP AUDIT LOGGING ---
 logging.basicConfig(
@@ -37,8 +39,9 @@ app = FastAPI(
     Automated risk scoring using a hybrid approach:
     * **Deterministic Rules:** 100% confidence checks.
     * **Risk Decision:** Weighted scoring engine (Approved / Rejected / Needs Review).
+    * **Cloud Orchestration:** Azure Logic App integration for high-risk alerts.
     """,
-    version="1.0.0",
+    version="1.1.0",
     openapi_tags=tags_metadata,
     docs_url="/docs",
     redoc_url="/redoc"
@@ -106,6 +109,20 @@ def verify_resource(request: VerifyRequest):
         judge = DecisionEngine()
         decision = judge.decide(raw_violations)
         
+        # --- DAY 25 INTEGRATION: CLOUD ALERTING ---
+        # If the verdict is REJECTED or NEEDS_REVIEW, fire the signal flare.
+        if decision.status in ["REJECTED", "NEEDS_REVIEW"]:
+            trigger_high_risk_alert(
+                decision_data={
+                    "status": decision.status,
+                    "max_risk_score": decision.max_risk_score,
+                    "reason": decision.reason,
+                    "violations": decision.violations
+                },
+                resource_id=request.resource.get("id", "Unknown_ID")
+            )
+        # ------------------------------------------
+        
         # 4. Explain the Results
         explanation = explain_violations(decision.violations)
         
@@ -123,4 +140,7 @@ def verify_resource(request: VerifyRequest):
 
 @app.get("/health", tags=["System"])
 def health():
-    return {"status": "online", "modules": ["Rules", "ML", "Judge", "AuditLog"]}
+    return {
+        "status": "online", 
+        "modules": ["Rules", "ML", "Judge", "AuditLog", "CloudAlerts"]
+    }
