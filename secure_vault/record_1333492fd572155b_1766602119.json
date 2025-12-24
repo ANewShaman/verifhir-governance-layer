@@ -1,0 +1,17 @@
+{
+  "record_id": "1333492fd572155b",
+  "timestamp": "2025-12-24T18:48:39.713934+00:00",
+  "status": "COMMITTED",
+  "metadata": {
+    "timestamp": "2025-12-24T18:42:47.715784+00:00",
+    "elapsed_seconds": 3.067,
+    "model": "verifhir-gpt-4o",
+    "regulation": "UK_GDPR",
+    "validation": "passed",
+    "regulation_context": "UK_GDPR"
+  },
+  "data": {
+    "original_text_length": 157,
+    "redacted_text": "Patient: [REDACTED NAME]  \nNHS Number: [REDACTED NHS NUMBER]  \nNI Number: [REDACTED NI NUMBER]  \nEmail: [REDACTED EMAIL]  \nAddress: [REDACTED ADDRESS]  \nDOB: [REDACTED DATE]  \n\n] ] ]"
+  }
+}
