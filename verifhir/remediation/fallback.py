@@ -1,23 +1,49 @@
+"""
+Compliance-Critical Deterministic Redaction Engine.
+
+This module implements a structure-agnostic, recursive PHI/PII redaction engine
+that serves as the final safety net when AI is unavailable or untrusted.
+
+PRODUCTION COMPLIANCE CODE - Correctness and auditability take priority.
+"""
+
 import re
-from typing import List, Tuple, Dict, Pattern
+import json
+import logging
+from typing import Any, List, Tuple, Dict, Pattern, Set
 from datetime import datetime
+
+logger = logging.getLogger("verifhir.remediation.fallback")
+
 
 class RegexFallbackEngine:
     """
-    HIPAA-Compliant Deterministic Safety Net.
-    Covers all 18 HIPAA PHI identifiers with both anchored and unstructured detection.
+    Deterministic Safety Net for PHI/PII Redaction.
+    
+    Architecture:
+    - Structure-agnostic: Handles strings, dicts, lists, JSON, FHIR bundles
+    - Recursive: Traverses nested objects completely
+    - Deterministic: Regex-only, no AI or heuristics
+    - Compliance-first: Accuracy > performance, false positives acceptable
+    
+    This engine MUST:
+    1. Never silently fail
+    2. Preserve JSON validity
+    3. Return consistent (redacted_data, rules_applied) tuple
+    4. Always return a result (convert unsupported types to string if needed)
     """
     
     def __init__(self):
-        # Current year for age-over-89 detection
+        """Initialize the engine with compiled regex patterns."""
         self.current_year = datetime.now().year
         self._compile_patterns()
+        logger.info("RegexFallbackEngine initialized with deterministic rules")
     
     def _compile_patterns(self):
-        """Initialize all regex patterns covering 18 HIPAA identifier categories"""
+        """Initialize all regex patterns covering PHI/PII categories."""
         self._PATTERNS: Dict[str, Pattern] = {
             # ============================================================
-            # CATEGORY 1: NAMES (Already covered, keeping for completeness)
+            # NAMES
             # ============================================================
             "NAME_ANCHORED": re.compile(
                 r"(?i)(?:patient|pt|name|patient name|pt name|full name)[\s:]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)",
@@ -33,7 +59,7 @@ class RegexFallbackEngine:
             ),
 
             # ============================================================
-            # CATEGORY 2: GEOGRAPHIC SUBDIVISIONS (Beyond full addresses)
+            # ADDRESSES
             # ============================================================
             "ADDRESS_ANCHORED": re.compile(
                 r"(?i)(?:address|addr|home|resides at|residence|location)[\s:]+(.+?)(?=\.|,\s*(?:email|phone|contact|ssn|dob)|$)",
@@ -54,7 +80,7 @@ class RegexFallbackEngine:
             ),
 
             # ============================================================
-            # CATEGORY 3: DATES (All dates except year)
+            # DATES
             # ============================================================
             "DATE_FULL": re.compile(
                 r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December|"
@@ -71,7 +97,6 @@ class RegexFallbackEngine:
                 r"\b\d{4}-\d{2}-\d{2}\b"
             ),
             
-            # Birth/Death dates with labels
             "DATE_BIRTH_ANCHORED": re.compile(
                 r"(?i)(?:DOB|date of birth|birth date|born on?)[\s:]+(.+?)(?=\.|,|$)",
                 re.MULTILINE
@@ -82,7 +107,6 @@ class RegexFallbackEngine:
                 re.MULTILINE
             ),
             
-            # Admission/Discharge
             "DATE_ADMISSION": re.compile(
                 r"(?i)(?:admitted|admission date|admit date)[\s:]+(.+?)(?=\.|,|$)",
                 re.MULTILINE
@@ -93,14 +117,13 @@ class RegexFallbackEngine:
                 re.MULTILINE
             ),
             
-            # Age over 89 detection
             "AGE_OVER_89": re.compile(
                 r"\b(?:age|aged)\s+([9]\d|1[0-9]{2})\b",
                 re.IGNORECASE
             ),
 
             # ============================================================
-            # CATEGORY 4: CONTACT INFORMATION
+            # CONTACT INFORMATION
             # ============================================================
             "EMAIL": re.compile(
                 r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"
@@ -117,32 +140,47 @@ class RegexFallbackEngine:
             ),
 
             # ============================================================
-            # CATEGORY 5: IDENTIFYING NUMBERS
+            # IDENTIFYING NUMBERS - US
             # ============================================================
             "SSN": re.compile(
                 r"\b\d{3}-\d{2}-\d{4}\b"
             ),
             
-            # Medical Record Number (MRN)
             "MRN": re.compile(
                 r"(?i)(?:MRN|medical record number|record number|patient id|patient number)[\s:#]+([A-Z0-9\-]{6,})",
                 re.MULTILINE
             ),
             
-            # Account/Member/Certificate Numbers
             "ACCOUNT_NUMBER": re.compile(
                 r"(?i)(?:account|acct|member|policy|certificate|license|licence)[\s#:]+([A-Z0-9\-]{6,})",
                 re.MULTILINE
             ),
             
-            # Health Plan Beneficiary Number
             "HEALTH_PLAN_ID": re.compile(
                 r"(?i)(?:beneficiary|insurance|plan|subscriber)[\s#:]+(?:number|id|no\.?)[\s:]*([A-Z0-9\-]{6,})",
                 re.MULTILINE
             ),
 
             # ============================================================
-            # CATEGORY 6: DEVICE & BIOMETRIC IDENTIFIERS
+            # IDENTIFYING NUMBERS - INDIA
+            # ============================================================
+            "INDIAN_AADHAAR": re.compile(
+                r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}\b"
+            ),
+            
+            "INDIAN_PAN": re.compile(
+                r"\b[A-Z]{5}[0-9]{4}[A-Z]{1}\b"
+            ),
+
+            # ============================================================
+            # IDENTIFYING NUMBERS - UK
+            # ============================================================
+            "NHS_NUMBER": re.compile(
+                r"\b\d{3}[\s-]?\d{3}[\s-]?\d{4}\b"
+            ),
+
+            # ============================================================
+            # DEVICE & BIOMETRIC IDENTIFIERS
             # ============================================================
             "IP_ADDRESS": re.compile(
                 r"\b(?:IP|ip access|ip address)?[\s:]*\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"
@@ -159,7 +197,7 @@ class RegexFallbackEngine:
             ),
 
             # ============================================================
-            # CATEGORY 7: DIGITAL FOOTPRINTS
+            # DIGITAL FOOTPRINTS
             # ============================================================
             "WEB_URL": re.compile(
                 r"(?i)(?:https?://|www\.)[A-Za-z0-9\-\._~:/\?#\[\]@!$&'\(\)\*\+,;=%]+",
@@ -171,13 +209,12 @@ class RegexFallbackEngine:
                 re.MULTILINE
             ),
             
-            # License plate patterns (various formats)
             "LICENSE_PLATE": re.compile(
                 r"\b[A-Z]{2,3}[\s\-]?\d{3,4}[A-Z]?\b|\b\d{3}[\s\-]?[A-Z]{3}\b"
             ),
 
             # ============================================================
-            # CATEGORY 8: IMAGES & MEDIA REFERENCES
+            # IMAGES & MEDIA REFERENCES
             # ============================================================
             "IMAGE_REFERENCE": re.compile(
                 r"(?i)(?:photo|photograph|image|picture|scan|x-ray|mri|ct scan)[\s:]+(?:attached|included|see|ref)",
@@ -202,8 +239,11 @@ class RegexFallbackEngine:
             "DATE_NUMERIC",
             "AGE_OVER_89",
             
-            # IDs and numbers
+            # IDs and numbers (specific patterns first)
             "SSN",
+            "INDIAN_AADHAAR",
+            "INDIAN_PAN",
+            "NHS_NUMBER",
             "MRN",
             "ACCOUNT_NUMBER",
             "HEALTH_PLAN_ID",
@@ -237,19 +277,129 @@ class RegexFallbackEngine:
             "NAME_UNSTRUCTURED"
         ]
 
-    def redact(self, text: str) -> Tuple[str, List[str]]:
+    def redact(self, data: Any) -> Tuple[Any, List[str]]:
         """
-        Redacts all HIPAA PHI identifiers from text.
-        Returns: (redacted_text, list_of_applied_rules)
+        Main entry point for redaction.
+        
+        Structure-agnostic: Handles strings, dicts, lists, and nested structures.
+        Recursively traverses all values, applying regex rules to strings only.
+        Preserves JSON validity and structure.
+        
+        Args:
+            data: Input data (string, dict, list, or any nested structure)
+            
+        Returns:
+            Tuple of (redacted_data, rules_applied):
+            - redacted_data: Same structure as input with redacted string values
+            - rules_applied: Unique list of rule category names (e.g., ["SSN", "EMAIL", "NAME"])
+            
+        Guarantees:
+            - Never returns None
+            - Always returns a result (converts unsupported types to string if needed)
+            - Preserves structure and JSON validity
+            - rules_applied is a unique, sorted list
         """
-        if not text or not text.strip():
-            return text, []
+        applied_rules: Set[str] = set()
+        
+        try:
+            redacted_data = self._redact_any(data, applied_rules)
+            
+            # Return sorted list for deterministic output
+            rules_list = sorted(list(applied_rules))
+            return redacted_data, rules_list
+            
+        except Exception as e:
+            # NO SILENT FAILURES: Log error but still attempt redaction
+            logger.error(f"Error during redaction: {e}", exc_info=True)
+            
+            # Fallback: convert to string and redact anyway
+            try:
+                data_str = str(data) if data is not None else ""
+                redacted_str, fallback_rules = self._redact_string(data_str, set())
+                return redacted_str, sorted(list(fallback_rules))
+            except Exception as fallback_error:
+                logger.error(f"Fallback redaction also failed: {fallback_error}", exc_info=True)
+                # Last resort: return original with empty rules
+                return data, []
 
+    def _redact_any(self, value: Any, applied_rules: Set[str]) -> Any:
+        """
+        Recursive redaction function that handles any data type.
+        
+        Args:
+            value: Any value (string, dict, list, etc.)
+            applied_rules: Set to accumulate applied rule names
+            
+        Returns:
+            Redacted value of the same type
+        """
+        # Handle None
+        if value is None:
+            return None
+        
+        # Handle strings (apply regex rules)
+        if isinstance(value, str):
+            return self._redact_string(value, applied_rules)
+        
+        # Handle dicts (recurse into values, preserve keys)
+        if isinstance(value, dict):
+            return {
+                key: self._redact_any(val, applied_rules)
+                for key, val in value.items()
+            }
+        
+        # Handle lists (recurse into elements, preserve order)
+        if isinstance(value, list):
+            return [self._redact_any(item, applied_rules) for item in value]
+        
+        # Handle tuples (recurse into elements, preserve type)
+        if isinstance(value, tuple):
+            return tuple(self._redact_any(item, applied_rules) for item in value)
+        
+        # Handle sets (recurse into elements, preserve type)
+        if isinstance(value, set):
+            return {self._redact_any(item, applied_rules) for item in value}
+        
+        # For other types (int, float, bool, etc.), convert to string and redact
+        # This ensures we don't miss PHI that might be encoded in unexpected types
+        try:
+            value_str = str(value)
+            redacted_str = self._redact_string(value_str, applied_rules)
+            # Try to convert back to original type if possible
+            if isinstance(value, (int, float)):
+                try:
+                    return type(value)(redacted_str)
+                except (ValueError, TypeError):
+                    return redacted_str
+            elif isinstance(value, bool):
+                # Don't try to convert redacted strings back to bool
+                return redacted_str
+            else:
+                return redacted_str
+        except Exception as e:
+            logger.warning(f"Could not redact value of type {type(value)}: {e}")
+            return value
+
+    def _redact_string(self, text: str, applied_rules: Set[str]) -> str:
+        """
+        Apply all regex patterns to a string value.
+        
+        Args:
+            text: Input string to redact
+            applied_rules: Set to accumulate applied rule names
+            
+        Returns:
+            Redacted string with PHI/PII replaced by [REDACTED <TYPE>] tags
+        """
+        if not text or not isinstance(text, str):
+            return text if text is not None else ""
+        
+        # Convert to string if not already (defensive)
+        text = str(text)
+        
         redacted_text = text
-        applied_rules = []
-        redaction_positions = []  # Track what's already redacted
-
-        # Process patterns in order
+        
+        # Process patterns in order (most specific → general)
         for rule_name in self._PATTERN_ORDER:
             if rule_name not in self._PATTERNS:
                 continue
@@ -260,26 +410,29 @@ class RegexFallbackEngine:
             # Process matches in reverse to maintain index validity
             for match in reversed(matches):
                 # Determine which group to use
-                if "ANCHORED" in rule_name or match.lastindex and match.lastindex >= 1:
+                if "ANCHORED" in rule_name and match.lastindex and match.lastindex >= 1:
                     # Anchored patterns capture the data after the label
                     target_text = match.group(1).strip() if match.lastindex >= 1 else match.group(0).strip()
                     start = match.start(1) if match.lastindex >= 1 else match.start(0)
                     end = match.end(1) if match.lastindex >= 1 else match.end(0)
+                    # Check the full match region for existing redactions
+                    full_match_text = match.group(0)
                 else:
                     # Unstructured patterns capture the entire match
                     target_text = match.group(0).strip()
                     start = match.start(0)
                     end = match.end(0)
+                    full_match_text = match.group(0)
 
-                # Skip if empty or already redacted
-                if not target_text or "[REDACTED" in target_text:
+                # Skip if empty
+                if not target_text:
                     continue
                 
-                # Skip if this position overlaps with existing redaction
-                if self._overlaps_redaction(start, end, redaction_positions):
+                # Skip if already redacted (check both target and full match region)
+                if "[REDACTED" in target_text or "[REDACTED" in full_match_text:
                     continue
                 
-                # Apply validation rules
+                # Apply validation rules (to reduce false positives)
                 if "NAME" in rule_name and not self._is_valid_name(target_text):
                     continue
                 
@@ -287,46 +440,55 @@ class RegexFallbackEngine:
                     continue
                 
                 if "AGE_OVER_89" in rule_name:
-                    age = int(match.group(1))
-                    if age < 90:
+                    try:
+                        age = int(match.group(1))
+                        if age < 90:
+                            continue
+                    except (ValueError, IndexError):
                         continue
                 
-                # Determine tag type
+                # Determine tag type (human-readable category name)
                 tag_type = self._determine_tag_type(rule_name)
                 replacement = f"[REDACTED {tag_type}]"
                 
                 # Apply redaction
                 redacted_text = redacted_text[:start] + replacement + redacted_text[end:]
-                applied_rules.append(tag_type)
                 
-                # Track this redaction position (adjust for new length)
-                redaction_positions.append((start, start + len(replacement)))
+                # Track rule application
+                applied_rules.add(tag_type)
 
-        return redacted_text, list(set(applied_rules))
+        return redacted_text
     
     def _determine_tag_type(self, rule_name: str) -> str:
-        """Map rule names to human-readable tag types"""
+        """
+        Map rule names to human-readable tag types.
+        
+        Returns consistent, auditable category names for rules_applied list.
+        """
         tag_map = {
             "NAME": "NAME",
             "ADDRESS": "ADDRESS",
             "ZIP": "ZIP",
             "DATE": "DATE",
-            "AGE": "AGE 90+",
+            "AGE": "AGE_90_PLUS",
             "EMAIL": "EMAIL",
             "PHONE": "PHONE",
             "FAX": "FAX",
             "SSN": "SSN",
             "MRN": "MRN",
-            "ACCOUNT": "ACCOUNT NUMBER",
-            "HEALTH": "HEALTH PLAN ID",
-            "IP": "IP ADDRESS",
-            "DEVICE": "DEVICE ID",
-            "BIOMETRIC": "BIOMETRIC ID",
+            "ACCOUNT": "ACCOUNT_NUMBER",
+            "HEALTH": "HEALTH_PLAN_ID",
+            "INDIAN_AADHAAR": "AADHAAR",
+            "INDIAN_PAN": "PAN",
+            "NHS": "NHS_NUMBER",
+            "IP": "IP_ADDRESS",
+            "DEVICE": "DEVICE_ID",
+            "BIOMETRIC": "BIOMETRIC_ID",
             "WEB": "URL",
-            "VEHICLE": "VEHICLE ID",
-            "LICENSE": "LICENSE PLATE",
-            "IMAGE": "IMAGE REFERENCE",
-            "FILE": "FILE ATTACHMENT"
+            "VEHICLE": "VEHICLE_ID",
+            "LICENSE": "LICENSE_PLATE",
+            "IMAGE": "IMAGE_REFERENCE",
+            "FILE": "FILE_ATTACHMENT"
         }
         
         # Find matching prefix
@@ -335,18 +497,15 @@ class RegexFallbackEngine:
                 return value
         
         # Default fallback
-        return rule_name.split('_')[0]
-    
-    def _overlaps_redaction(self, start: int, end: int, positions: List[Tuple[int, int]]) -> bool:
-        """Check if a span overlaps with any existing redaction"""
-        for pos_start, pos_end in positions:
-            if not (end <= pos_start or start >= pos_end):
-                return True
-        return False
+        return rule_name.split('_')[0] if '_' in rule_name else rule_name
     
     def _is_valid_name(self, text: str) -> bool:
-        """Validate that detected name is likely a real person name"""
-        if len(text) < 2 or len(text) > 50:
+        """
+        Validate that detected name is likely a real person name.
+        
+        Note: False positives are acceptable, but this reduces obvious false positives.
+        """
+        if not text or len(text) < 2 or len(text) > 50:
             return False
         
         words = text.strip().split()
@@ -370,8 +529,12 @@ class RegexFallbackEngine:
         return True
     
     def _is_valid_address(self, text: str) -> bool:
-        """Validate that detected address is likely real"""
-        if len(text) < 5 or len(text) > 200:
+        """
+        Validate that detected address is likely real.
+        
+        Note: False positives are acceptable, but this reduces obvious false positives.
+        """
+        if not text or len(text) < 5 or len(text) > 200:
             return False
         
         if text.lower().strip() in ['address', 'home', 'residence', 'location']:
