@@ -5,7 +5,9 @@ from datetime import datetime
 from verifhir.jurisdiction.models import JurisdictionContext
 from verifhir.explainability.view import ExplainableViolation
 from .compliance_decision import ComplianceDecision
+from verifhir.models.negative_assurance import NegativeAssertion
 
+negative_assertions: List[NegativeAssertion]
 
 @dataclass(frozen=True)
 class HumanDecision:
