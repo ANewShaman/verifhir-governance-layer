@@ -111,18 +111,20 @@ def verify_resource(request: VerifyRequest):
         # Track start time for telemetry
         start_time = time.perf_counter()
         
-        # 1. Normalize input (HL7 → FHIR if needed)
+        # 1. Normalize input (HL7 → FHIR if needed) - SINGLE INGRESS POINT
+        # This is the ONLY place where HL7 is processed. After this, only FHIR exists.
         normalized = normalize_input(
             payload=request.resource,
             input_format=request.input_format,
         )
         fhir_bundle = normalized["bundle"]
-        input_provenance = normalized["metadata"]
+        input_provenance = normalized["metadata"]  # Preserved for audit record attachment
         
         # 2. Adapt the Policy
         adapted_policy = PolicyAdapter(request.policy)
 
         # 3. Run the Rules & ML (on normalized FHIR only)
+        # Governance logic NEVER sees HL7 - only normalized FHIR
         raw_violations = run_deterministic_rules(adapted_policy, fhir_bundle)
         
         # 4. Judge the Risk
