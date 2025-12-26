@@ -1,5 +1,8 @@
 import json
-from typing import Optional
+import os
+import hashlib
+from typing import Optional, Dict, Any
+from datetime import datetime
 
 try:
     from azure.storage.blob import BlobClient  # type: ignore
@@ -83,3 +86,48 @@ class AuditStorage:
             data=json.dumps(audit_dict, indent=2),
             overwrite=False  # REQUIRED for immutability
         )
+
+
+def commit_record(
+    original_text: str,
+    redacted_text: str,
+    metadata: Dict[str, Any],
+) -> str:
+    """
+    Commits a redaction record to secure vault.
+    
+    This is for remediation/redaction records, not audit records.
+    Returns a file ID for reference.
+    """
+    import pathlib
+    
+    # Create secure_vault directory if it doesn't exist
+    vault_dir = pathlib.Path("secure_vault")
+    vault_dir.mkdir(exist_ok=True)
+    
+    # Generate deterministic record ID from content
+    content_hash = hashlib.sha256(
+        f"{original_text}{redacted_text}".encode()
+    ).hexdigest()[:16]
+    
+    timestamp = int(datetime.utcnow().timestamp())
+    record_id = f"{content_hash}_{timestamp}"
+    
+    # Build record structure
+    record = {
+        "record_id": content_hash,
+        "timestamp": datetime.utcnow().isoformat(),
+        "status": "COMMITTED",
+        "metadata": metadata,
+        "data": {
+            "original_text_length": len(original_text),
+            "redacted_text": redacted_text
+        }
+    }
+    
+    # Write to secure vault
+    file_path = vault_dir / f"record_{record_id}.json"
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(record, f, indent=2, ensure_ascii=False)
+    
+    return record_id

@@ -1,0 +1,12 @@
+{
+  "record_id": "9a990b707f4a1f3e",
+  "timestamp": "2025-12-26T19:16:52.707220",
+  "status": "COMMITTED",
+  "metadata": {
+    "test": "metadata"
+  },
+  "data": {
+    "original_text_length": 4,
+    "redacted_text": "redacted"
+  }
+}
