@@ -15,7 +15,6 @@ from datetime import datetime
 
 logger = logging.getLogger("verifhir.remediation.fallback")
 
-
 class RegexFallbackEngine:
     """
     Deterministic Safety Net for PHI/PII Redaction.
