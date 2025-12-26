@@ -1,9 +1,9 @@
 from dataclasses import dataclass
-from typing import List
+from typing import Literal
 
 @dataclass(frozen=True)
 class NegativeAssertion:
     category: str
-    status: str               # always "NOT_DETECTED"
-    supported_by: List[str]
+    status: Literal["NOT_DETECTED"]
+    supported_by: str
     scope_note: str

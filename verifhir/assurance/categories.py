@@ -20,4 +20,3 @@ ASSURABLE_CATEGORIES = {
         "credit_card"
     ],
 }
-print("Loaded categories.py, names:", dir())

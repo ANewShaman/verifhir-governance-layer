@@ -31,10 +31,10 @@ def build_audit_record(
         if v.detection_method
     })
 
-    # DAY 26 — negative assurance
+    # DAY 28 — negative assurance
     negative_assertions = generate_negative_assertions(
-        detections=detections,
-        sensors_used=["AzureAI-Pii", "Presidio"]
+        explainable_violations=detections,
+        detection_methods_used=detection_methods_used
     )
 
     return AuditRecord(

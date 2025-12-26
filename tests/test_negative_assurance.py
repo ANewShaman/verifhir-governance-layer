@@ -2,7 +2,7 @@ from verifhir.assurance.generator import generate_negative_assertions
 from verifhir.explainability.view import ExplainableViolation
 
 def test_negative_assurance_not_created_when_detected():
-    detections = [
+    explainable_violations = [
         ExplainableViolation(
             regulation="HIPAA",
             citation="164.514",
@@ -16,11 +16,11 @@ def test_negative_assurance_not_created_when_detected():
         )
     ]
 
-    sensors_used = ["AzureAI-Pii"]
+    detection_methods_used = ["ml-primary"]
 
     negative_assertions = generate_negative_assertions(
-        detections=detections,
-        sensors_used=sensors_used
+        explainable_violations=explainable_violations,
+        detection_methods_used=detection_methods_used
     )
 
     categories = [na.category for na in negative_assertions]
