@@ -19,13 +19,13 @@ class HumanDecision:
 
 @dataclass(frozen=True)
 class AuditRecord:
+    # Core identity
     audit_id: str
     timestamp: datetime
 
     # Integrity
     dataset_fingerprint: str
     record_hash: str
-    previous_record_hash: Optional[str]
 
     # Versioning
     engine_version: str
@@ -43,8 +43,9 @@ class AuditRecord:
     detection_methods_used: List[str]
     negative_assertions: List[NegativeAssertion]
 
-    # Human accountability
+    # Human accountability (MANDATORY)
     human_decision: HumanDecision
 
-    # Input provenance (HL7 → FHIR normalization metadata)
+    # Optional fields (must come after all required fields)
+    previous_record_hash: Optional[str] = None
     input_provenance: Optional[Dict[str, Any]] = None
