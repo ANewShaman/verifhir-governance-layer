@@ -4,6 +4,7 @@ import pytest
 from verifhir.jurisdiction.models import JurisdictionContext
 from verifhir.models.compliance_decision import ComplianceDecision
 from verifhir.models.audit_record import HumanDecision
+from verifhir.models.purpose import Purpose
 from verifhir.orchestrator.audit_builder import build_audit_record
 
 def mock_jurisdiction_context():
@@ -36,6 +37,7 @@ def test_audit_creation_succeeds_with_human_decision():
         human_decision=human,
         dataset_fingerprint="abc123",
         record_hash="hash123",
+        purpose=Purpose.RESEARCH,
         previous_record_hash=None,
     )
 

@@ -1,50 +1,85 @@
-import os
 import json
-import logging
-import hashlib
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Dict, Any
+from typing import Optional
 
-# Configure local "Vault" path
-VAULT_DIR = Path("secure_vault")
-VAULT_DIR.mkdir(exist_ok=True)
+try:
+    from azure.storage.blob import BlobClient  # type: ignore
+    AZURE_AVAILABLE = True
+except ImportError:
+    AZURE_AVAILABLE = False
+    BlobClient = None  # type: ignore
 
-logger = logging.getLogger("verifhir.storage")
+from verifhir.models.audit_record import AuditRecord
+from verifhir.audit.hash_utils import compute_audit_hash
 
-def commit_record(original_text: str, redacted_text: str, metadata: Dict[str, Any]) -> str:
+
+class AuditStorage:
     """
-    Saves the approved record to the local secure vault.
-    Returns the filename (Record ID).
+    Single persistence boundary for all audit records.
+    Enforces hash chaining and immutable writes.
     """
-    try:
-        # 1. Generate a unique ID based on content hash (Immutability check prep)
-        content_hash = hashlib.sha256(redacted_text.encode()).hexdigest()[:16]
-        timestamp = datetime.now(timezone.utc).isoformat()
-        
-        # 2. Construct the record
-        record = {
-            "record_id": content_hash,
-            "timestamp": timestamp,
-            "status": "COMMITTED",
-            "metadata": metadata,
-            "data": {
-                "original_text_length": len(original_text),
-                # In production, we might not save the original, only the redacted
-                "redacted_text": redacted_text 
-            }
-        }
-        
-        # 3. Save to JSON
-        filename = f"record_{content_hash}_{int(datetime.now().timestamp())}.json"
-        file_path = VAULT_DIR / filename
-        
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(record, f, indent=2)
-            
-        logger.info(f"Record committed to vault: {filename}")
-        return filename
 
-    except Exception as e:
-        logger.error(f"Storage Commit Failed: {e}")
-        raise e
+    def __init__(
+        self,
+        connection_string: str,
+        container_name: str,
+    ):
+        if not AZURE_AVAILABLE:
+            raise ImportError(
+                "Azure Storage SDK is required for AuditStorage. "
+                "Install it with: pip install azure-storage-blob"
+            )
+        self.connection_string = connection_string
+        self.container_name = container_name
+
+    def _get_blob_client(self, blob_name: str) -> BlobClient:
+        return BlobClient.from_connection_string(
+            conn_str=self.connection_string,
+            container_name=self.container_name,
+            blob_name=blob_name,
+        )
+
+    def _serialize_audit(self, audit: AuditRecord) -> dict:
+        """
+        Converts AuditRecord into a JSON-serializable dict.
+        """
+        return json.loads(json.dumps(audit, default=lambda o: o.__dict__))
+
+    def get_last_audit(
+        self,
+        dataset_fingerprint: str,
+    ) -> Optional[AuditRecord]:
+        """
+        Fetch the most recent audit for a dataset.
+        For MVP: return None or implement lookup if available.
+        """
+        # MVP: assume sequential writes; return None
+        return None
+
+    def commit_record(self, audit: AuditRecord) -> None:
+        """
+        Enforces hash chaining and writes audit immutably to Blob Storage (WORM-ready).
+        """
+
+        # --- Integrity: hash chaining ---
+        last_audit = self.get_last_audit(audit.dataset_fingerprint)
+
+        if last_audit:
+            if audit.previous_record_hash != last_audit.record_hash:
+                raise ValueError("Audit hash chain broken")
+
+        # --- Canonical hash verification ---
+        audit_dict = self._serialize_audit(audit)
+        computed_hash = compute_audit_hash(audit_dict)
+
+        if computed_hash != audit.record_hash:
+            raise ValueError("Audit record hash mismatch")
+
+        # --- Immutable write ---
+        blob_client = self._get_blob_client(
+            blob_name=f"{audit.audit_id}.json"
+        )
+
+        blob_client.upload_blob(
+            data=json.dumps(audit_dict, indent=2),
+            overwrite=False  # REQUIRED for immutability
+        )

@@ -5,6 +5,7 @@ from datetime import datetime
 from verifhir.jurisdiction.models import JurisdictionContext
 from verifhir.explainability.view import ExplainableViolation
 from verifhir.models.negative_assurance import NegativeAssertion
+from verifhir.models.purpose import Purpose
 from .compliance_decision import ComplianceDecision
 
 
@@ -21,7 +22,7 @@ class AuditRecord:
     audit_id: str
     timestamp: datetime
 
-    # Identity & integrity
+    # Integrity
     dataset_fingerprint: str
     record_hash: str
     previous_record_hash: Optional[str]
@@ -34,15 +35,12 @@ class AuditRecord:
     jurisdiction_context: JurisdictionContext
     source_jurisdiction: str
     destination_jurisdiction: str
+    purpose: Purpose
 
-    # Risk & detection
+    # Evidence
     decision: ComplianceDecision
     detections: List[ExplainableViolation]
-
-    #DAY 26 ADDITION
     detection_methods_used: List[str]
-
-    #DAY 26 ADDITION
     negative_assertions: List[NegativeAssertion]
 
     # Human accountability

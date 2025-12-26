@@ -1,6 +1,7 @@
 from datetime import datetime
 from verifhir.models.audit_record import AuditRecord, HumanDecision
 from verifhir.models.compliance_decision import ComplianceDecision, ComplianceOutcome
+from verifhir.models.purpose import Purpose
 
 def test_audit_hash_is_deterministic():
     fixed_time = datetime(2025, 1, 1, 0, 0, 0)
@@ -30,6 +31,7 @@ def test_audit_hash_is_deterministic():
         jurisdiction_context=None,  # or mock if needed
         source_jurisdiction="EU",
         destination_jurisdiction="US",
+        purpose=Purpose.RESEARCH,
         decision=decision,
         detections=[],
         detection_methods_used=["rules"],

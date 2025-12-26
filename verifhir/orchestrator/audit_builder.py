@@ -5,6 +5,7 @@ from typing import List
 from verifhir.jurisdiction.models import JurisdictionContext
 from verifhir.models.compliance_decision import ComplianceDecision
 from verifhir.models.audit_record import AuditRecord, HumanDecision
+from verifhir.models.purpose import Purpose
 from verifhir.explainability.view import ExplainableViolation
 from verifhir.assurance.generator import generate_negative_assertions
 
@@ -16,6 +17,7 @@ def build_audit_record(
     human_decision: HumanDecision,
     dataset_fingerprint: str,
     record_hash: str,
+    purpose: Purpose,
     previous_record_hash: str = None,
 ) -> AuditRecord:
     """
@@ -52,6 +54,7 @@ def build_audit_record(
         jurisdiction_context=ctx,
         source_jurisdiction=ctx.source_country,
         destination_jurisdiction=ctx.destination_country,
+        purpose=purpose,
 
         # Risk & detection
         decision=decision,
