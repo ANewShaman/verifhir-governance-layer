@@ -10,6 +10,8 @@ from verifhir.decision.judge import DecisionEngine
 from verifhir.explainability.mapper import explain_violations
 # --- DAY 25 IMPORT: CLOUD ALERTING ---
 from verifhir.integration.azure_alerts import trigger_high_risk_alert
+# --- DAY 29 IMPORT: TELEMETRY ---
+from verifhir.telemetry import init_telemetry, emit_decision_telemetry
 
 # --- 1. SETUP AUDIT LOGGING ---
 logging.basicConfig(
@@ -46,6 +48,9 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
+
+# --- DAY 29: INITIALIZE TELEMETRY AT STARTUP ---
+init_telemetry()
 
 # --- 3. MIDDLEWARE: AUDIT TRAIL ---
 @app.middleware("http")
@@ -99,6 +104,9 @@ def verify_resource(request: VerifyRequest):
     Submit a FHIR Resource for compliance verification.
     """
     try:
+        # Track start time for telemetry
+        start_time = time.perf_counter()
+        
         # 1. Adapt the Policy
         adapted_policy = PolicyAdapter(request.policy)
 
@@ -108,6 +116,35 @@ def verify_resource(request: VerifyRequest):
         # 3. Judge the Risk
         judge = DecisionEngine()
         decision = judge.decide(raw_violations)
+        
+        # Calculate latency for telemetry
+        latency_ms = int((time.perf_counter() - start_time) * 1000)
+        
+        # Determine decision_path based on detection methods used
+        detection_methods = {v.detection_method for v in raw_violations if v.detection_method}
+        has_rules = any(
+            method in ["rule-based", "DeterministicRule", "Rule"]
+            for method in detection_methods
+        )
+        has_ml = any(
+            method in ["ml-primary", "Presidio_Deterministic", "Presidio_Probabilistic", "azure_ai", "AzureAI-Pii"]
+            for method in detection_methods
+        )
+        
+        if has_rules and has_ml:
+            decision_path = "hybrid"
+        elif has_ml:
+            decision_path = "ml-sensor"
+        else:
+            decision_path = "rules"
+        
+        # --- DAY 29: EMIT TELEMETRY ---
+        emit_decision_telemetry(
+            decision_latency_ms=latency_ms,
+            risk_score=decision.max_risk_score,
+            decision_path=decision_path,
+            fallback_triggered=False,  # Fallback is not part of decision flow
+        )
         
         # --- DAY 25 INTEGRATION: CLOUD ALERTING ---
         # If the verdict is REJECTED or NEEDS_REVIEW, fire the signal flare.
