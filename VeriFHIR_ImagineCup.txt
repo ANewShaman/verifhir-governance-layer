@@ -1,0 +1,250 @@
+VeriFHIR — MVP Concept & Architecture Document
+Status: MVP concept specification (non-submission)
+Domain: Cross-border healthcare data governance
+Primary Platform: Microsoft Azure
+
+1. Purpose and Product Boundary
+Purpose
+VeriFHIR is a pre-execution compliance and governance layer for cross-border healthcare data sharing. It evaluates whether a specific healthcare dataset can be shared across jurisdictions in compliance with applicable privacy regulations and documents the decision in a tamper-evident, auditable manner.
+VeriFHIR answers one question only:
+“Is this dataset compliant to share across borders, under which regulations, and why?”
+
+Explicit Product Boundary (Locked)
+VeriFHIR DOES:
+Evaluate regulatory compliance before data leaves an organization
+Resolve jurisdictional applicability and conflicts
+Apply deterministic, regulation-specific rules
+Detect hidden PHI in unstructured clinical text using ML
+Produce explainable compliance risk scores
+Suggest compliant redactions and remediation options
+Require explicit human approval for every decision
+Generate immutable audit records
+VeriFHIR DOES NOT:
+Store or host patient data
+Operate FHIR servers
+Replace EHRs (Epic, Cerner, etc.)
+Manage patient consent or identity
+Transmit, route, or deliver datasets
+Enforce decisions autonomously
+This boundary is intentional and avoids overlap with EHR platforms, Azure Health Data Services, and document automation or routing systems.
+
+2. Problem Statement
+Cross-border healthcare data sharing is critical for clinical research and care coordination, yet privacy regulations such as GDPR (EU), HIPAA (US), and India’s DPDP Act impose complex, sometimes conflicting requirements.
+Current compliance workflows are:
+Manual: Reviewers inspect hundreds of FHIR fields per dataset
+Inconsistent: Interpretations vary across reviewers and regions
+Error-prone: Hidden identifiers in free-text clinical notes are frequently missed
+Opaque: Decisions lack structured explanations or durable audit trails
+These issues slow research timelines, increase operational cost, and expose institutions to regulatory risk.
+
+3. Solution Overview
+VeriFHIR provides a governance checkpoint that runs before cross-border data sharing occurs. It assists compliance teams through explainable automation while preserving human accountability.
+VeriFHIR supports decisions; it does not replace human judgment.
+
+4. MVP Architecture (High-Level)
+FHIR Dataset (JSON)
+        ↓
+Jurisdiction Resolver
+        ↓
+Deterministic Rule Engine
+        ↓
+Azure AI Language (PHI Detection)
+        ↓
+Explainable Risk Scoring
+        ↓
+Redaction Suggestion Engine (Azure OpenAI)
+        ↓
+Human Review & Approval
+        ↓
+Immutable Audit Record (Azure Blob WORM)
+
+5. Core Components (MVP)
+5.1 Jurisdiction Resolver
+Purpose
+Determine which privacy regulations apply to a dataset transfer and resolve conflicts deterministically.
+Inputs
+Source jurisdiction
+Extracted from meta.source when available; otherwise user-specified.
+Destination jurisdiction
+Explicitly specified in the submission form.
+Data subject residency
+Extracted from Patient.address.country when present.
+Conflict Resolution Logic
+When multiple regulations apply, VeriFHIR enforces the most restrictive applicable regulation.
+Rules:
+EU residents → GDPR always applies, regardless of data location.
+US-origin healthcare data → HIPAA applies.
+Multi-hop transfers → all intermediate jurisdictions are evaluated.
+If any applicable regulation prohibits sharing, the dataset is flagged as non-compliant.
+Example
+Input: EU patient data → US hospital → India research partner
+Applicable: GDPR (primary), HIPAA (secondary), DPDP (tertiary)
+Enforcement: GDPR Article 44 adequacy requirements govern
+Rule Database
+JSON-based mapping of countries to regulatory frameworks
+Version-controlled
+Updateable without code deployment
+Included in audit records for traceability
+
+5.2 Deterministic Rule Engine
+Evaluates structured FHIR fields against regulation-specific constraints.
+Characteristics:
+Explicit, deterministic rules
+Regulation citations (e.g., GDPR Article 4(1))
+No probabilistic or hidden logic
+Fully auditable outcomes
+
+5.3 Primary PHI Detection
+Primary Engine: Azure AI Language
+Capabilities:
+Detects standard PII/PHI (names, dates, locations, identifiers)
+Produces confidence scores (0.0–1.0)
+Enterprise-grade reliability and support
+Azure AI Language is the authoritative detection source.
+
+5.4 Healthcare-Specific Augmentation
+Domain-Specific Augmentation: Microsoft Presidio (Selective)
+Used only for healthcare-specific identifiers where formats vary:
+Medical Record Numbers (MRN)
+Provider NPI numbers
+Device and implant identifiers
+Insurance member IDs
+Behavior:
+Runs only on high-sensitivity text
+Augments Azure AI Language results
+Findings merged into a unified detection set
+Rationale:
+Azure AI Language excels at general PII detection. Presidio adds healthcare-specific coverage where pre-trained models have gaps.
+
+5.5 Explainable Risk Scoring
+Scoring Formula
+Total Risk =
+(Σ Rule Violations × Severity Weight)
++ (Σ ML Detections × Confidence)
+Severity Weights
+Critical (SSN, passport, national ID): 5.0
+Major (full name, precise DOB): 2.0
+Minor (city, age range): 0.5
+Risk Thresholds
+0.0–3.0 → LOW
+Fast-track human review
+3.1–8.0 → MEDIUM
+Detailed compliance review required
+8.1+ → HIGH
+Blocked pending redaction
+Example
+Critical violation: 1 × 5.0 = 5.0
+ML detections: 0.95 + 0.78 = 1.73
+Total Risk = 6.73 → MEDIUM
+Transparency Requirement
+Each score component includes:
+Exact FHIR field path
+Regulation citation
+Detection method
+Confidence level (for ML detections)
+
+5.6 Redaction Suggestion Engine
+Powered by: Azure OpenAI
+Purpose
+Assist users in remediating violations while preserving clinical and research utility.
+Functionality
+1.Analyze violations in regulatory context
+2.Generate redaction options:
+oField removal
+oText masking
+oData generalization
+3.Provide compliant alternatives
+4.Explain impact on data utility
+Critical Constraints
+Suggestions only; never auto-applied
+Human approval required
+Users may accept, reject, or modify suggestions
+Original data unchanged until approval
+Redaction history logged for audit
+Safety Prompting
+Azure OpenAI prompts enforce:
+Applicable regulation context
+Minimal-redaction principle
+Preservation of clinical usefulness
+Mandatory explanation per suggestion
+Fallback
+If Azure OpenAI is unavailable, rule-based redaction templates are shown.
+
+5.7 Human-in-the-Loop Approval
+All datasets require explicit human approval.
+Recorded:
+Reviewer identity
+Decision outcome
+Rationale
+Applied redactions
+No autonomous approvals exist.
+
+6. Audit and Integrity Model
+Audit Record Structure
+{
+  "audit_id": "verifhir-2026-01-15-abc123",
+  "timestamp": "2026-01-15T14:32:10Z",
+  "dataset_fingerprint": "sha256:...",
+  "jurisdictions": {
+    "source": "EU",
+    "destination": "US",
+    "applicable_regulations": ["GDPR", "HIPAA"]
+  },
+  "risk_assessment": {
+    "total_score": 6.73,
+    "severity": "MEDIUM",
+    "rule_violations": 1,
+    "ml_detections": 2
+  },
+  "violations": [
+    {
+      "type": "CRITICAL",
+      "field": "Observation[3].note",
+      "entity": "SSN",
+      "regulation": "GDPR Article 4(1)",
+      "detection_method": "rule-based"
+    }
+  ],
+  "human_decision": {
+    "reviewer_id": "user-12345",
+    "decision": "APPROVED_WITH_REDACTIONS",
+    "notes": "SSN redacted, clinical context preserved"
+  },
+  "immutability": {
+    "storage": "Azure Blob (WORM)",
+    "retention_years": 7
+  }
+}
+Storage
+Azure Immutable Blob Storage (WORM)
+7-year retention (HIPAA-aligned)
+Write-once, delete-blocked
+Cryptographically linked records
+
+7. Technology Stack (MVP)
+Backend: Python, FastAPI
+Healthcare Standard: HL7 FHIR R4
+AI Services:
+oAzure AI Language (primary PHI detection)
+oAzure OpenAI (redaction suggestions)
+oMicrosoft Presidio (healthcare augmentation)
+Security: SHA-256 hashing
+Infrastructure: Azure-native, EHR-agnostic
+
+8. MVP Feature Set (Locked)
+Must-Have
+Jurisdiction resolver with conflict resolution
+Deterministic rule engine
+Azure AI Language PHI detection
+Explainable risk scoring with thresholds
+Redaction suggestions (Azure OpenAI)
+Human approval workflow
+Immutable audit records
+Explicitly Excluded
+Patient consent management
+Data transmission or routing
+Identity resolution
+Real-time data streaming
+
+9. Summary
+VeriFHIR is a governance-first, human-approved compliance layer for cross-border healthcare data sharing. By combining deterministic regulatory rules, Azure-native machine learning, explainable scoring, AI-assisted remediation, and immutable audit records, VeriFHIR transforms compliance from a bottleneck into a proactive safeguard—without storing data or replacing existing healthcare systems.
