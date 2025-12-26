@@ -4,10 +4,9 @@ from datetime import datetime
 
 from verifhir.jurisdiction.models import JurisdictionContext
 from verifhir.explainability.view import ExplainableViolation
-from .compliance_decision import ComplianceDecision
 from verifhir.models.negative_assurance import NegativeAssertion
+from .compliance_decision import ComplianceDecision
 
-negative_assertions: List[NegativeAssertion]
 
 @dataclass(frozen=True)
 class HumanDecision:
@@ -40,5 +39,11 @@ class AuditRecord:
     decision: ComplianceDecision
     detections: List[ExplainableViolation]
 
-    # Human accountability (mandatory by contract, enforced upstream)
+    #DAY 26 ADDITION
+    detection_methods_used: List[str]
+
+    #DAY 26 ADDITION
+    negative_assertions: List[NegativeAssertion]
+
+    # Human accountability
     human_decision: HumanDecision
