@@ -1,0 +1,47 @@
+from datetime import datetime
+import uuid
+from typing import List
+
+# Internal model imports - Ensure these paths match your folder structure
+from verifhir.jurisdiction.models import JurisdictionContext
+from verifhir.models.compliance_decision import ComplianceDecision
+from verifhir.models.audit_record import AuditRecord, HumanDecision
+from verifhir.explainability.view import ExplainableViolation
+
+def build_audit_record(
+    ctx: JurisdictionContext,
+    decision: ComplianceDecision,
+    detections: List[ExplainableViolation],
+    human_decision: HumanDecision,
+    dataset_fingerprint: str,
+    record_hash: str,
+    previous_record_hash: str = None,
+) -> AuditRecord:
+    """
+    Constructs a complete AuditRecord by mapping context and decision data.
+    """
+    return AuditRecord(
+        audit_id=str(uuid.uuid4()),
+        timestamp=datetime.utcnow(),
+        
+        # Identity & integrity
+        dataset_fingerprint=dataset_fingerprint,
+        record_hash=record_hash,
+        previous_record_hash=previous_record_hash,
+        
+        # Versioning
+        engine_version="1.0.0",
+        policy_snapshot_version="v2025.01",
+        
+        # Context mapping
+        jurisdiction_context=ctx,
+        source_jurisdiction=ctx.source_country,
+        destination_jurisdiction=ctx.destination_country,
+        
+        # Risk & detection
+        decision=decision,
+        detections=detections,
+        
+        # Human accountability
+        human_decision=human_decision
+    )

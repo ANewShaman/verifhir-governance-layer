@@ -1,0 +1,17 @@
+{
+  "record_id": "f565d8edc0894c8d",
+  "timestamp": "2025-12-26T07:28:57.697169+00:00",
+  "status": "COMMITTED",
+  "metadata": {
+    "timestamp": "2025-12-26T07:28:39.838840+00:00",
+    "elapsed_seconds": 7.969,
+    "model": "verifhir-gpt-4o",
+    "regulation": "HIPAA",
+    "validation": "passed",
+    "regulation_context": "HIPAA"
+  },
+  "data": {
+    "original_text_length": 230,
+    "redacted_text": "Patient [REDACTED NAME] (MRN: [REDACTED MRN], SSN: [REDACTED SSN]) admitted on [REDACTED DATE].  \nContact: [REDACTED PHONE], [REDACTED EMAIL]  \nAddress: [REDACTED ADDRESS]  \nDOB: [REDACTED DATE]  \nIP Access: [REDACTED IP ADDRESS]  \n\n] ] ]"
+  }
+}

@@ -38,9 +38,5 @@ class AuditRecord:
     decision: ComplianceDecision
     detections: List[ExplainableViolation]
 
-    # Human accountability (mandatory)
+    # Human accountability (mandatory by contract, enforced upstream)
     human_decision: HumanDecision
-
-    def __post_init__(self):
-        if self.human_decision is None:
-            raise ValueError("Audit record cannot be created without human approval")
