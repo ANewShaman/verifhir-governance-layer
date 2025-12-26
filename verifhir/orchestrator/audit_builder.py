@@ -19,6 +19,7 @@ def build_audit_record(
     record_hash: str,
     purpose: Purpose,
     previous_record_hash: str = None,
+    input_provenance: dict = None,
 ) -> AuditRecord:
     """
     Constructs a complete AuditRecord by mapping context and decision data.
@@ -61,6 +62,9 @@ def build_audit_record(
         detections=detections,
         detection_methods_used=detection_methods_used,
         negative_assertions=negative_assertions,
+
+        # Input provenance (HL7 → FHIR normalization metadata)
+        input_provenance=input_provenance,
 
         # Human accountability
         human_decision=human_decision

@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
@@ -12,6 +12,8 @@ from verifhir.explainability.mapper import explain_violations
 from verifhir.integration.azure_alerts import trigger_high_risk_alert
 # --- DAY 29 IMPORT: TELEMETRY ---
 from verifhir.telemetry import init_telemetry, emit_decision_telemetry
+# --- HL7 ADAPTER ---
+from verifhir.adapters.hl7_adapter import normalize_input
 
 # --- 1. SETUP AUDIT LOGGING ---
 logging.basicConfig(
@@ -79,12 +81,14 @@ class PolicyRequest(BaseModel):
 class VerifyRequest(BaseModel):
     resource: Dict[str, Any]
     policy: PolicyRequest
+    input_format: str = "FHIR"  # "FHIR" | "HL7v2"
 
 class ComplianceResponse(BaseModel):
     status: str
     max_risk_score: float
     reason: str
     violations: List[Dict[str, Any]]
+    input_provenance: Optional[Dict[str, Any]] = None
 
 # --- ADAPTER (The Fix for Legacy Rules) ---
 class PolicyAdapter:
@@ -107,13 +111,21 @@ def verify_resource(request: VerifyRequest):
         # Track start time for telemetry
         start_time = time.perf_counter()
         
-        # 1. Adapt the Policy
+        # 1. Normalize input (HL7 → FHIR if needed)
+        normalized = normalize_input(
+            payload=request.resource,
+            input_format=request.input_format,
+        )
+        fhir_bundle = normalized["bundle"]
+        input_provenance = normalized["metadata"]
+        
+        # 2. Adapt the Policy
         adapted_policy = PolicyAdapter(request.policy)
 
-        # 2. Run the Rules & ML
-        raw_violations = run_deterministic_rules(adapted_policy, request.resource)
+        # 3. Run the Rules & ML (on normalized FHIR only)
+        raw_violations = run_deterministic_rules(adapted_policy, fhir_bundle)
         
-        # 3. Judge the Risk
+        # 4. Judge the Risk
         judge = DecisionEngine()
         decision = judge.decide(raw_violations)
         
@@ -160,15 +172,16 @@ def verify_resource(request: VerifyRequest):
             )
         # ------------------------------------------
         
-        # 4. Explain the Results
+        # 5. Explain the Results
         explanation = explain_violations(decision.violations)
         
-        # 5. Return the Verdict
+        # 6. Return the Verdict (input_provenance available for audit if needed)
         return {
             "status": decision.status,
             "max_risk_score": decision.max_risk_score,
             "reason": decision.reason,
-            "violations": [v.to_dict() for v in explanation]
+            "violations": [v.to_dict() for v in explanation],
+            "input_provenance": input_provenance  # For audit traceability
         }
 
     except Exception as e:

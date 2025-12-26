@@ -6,6 +6,13 @@ import difflib
 import html
 from verifhir.remediation.redactor import RedactionEngine
 from verifhir.storage import commit_record
+from verifhir.adapters.hl7_adapter import normalize_input
+
+# main.py or app.py
+
+from verifhir.telemetry import init_telemetry
+
+init_telemetry()
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -255,6 +262,16 @@ col_input, col_output = st.columns([1, 1], gap="large")
 with col_input:
     st.subheader("Source Input")
     
+    # Format selector
+    input_format = st.selectbox(
+        "Input format",
+        ["FHIR JSON", "HL7 v2 (ADT^A01)"],
+        help="Select the input format. HL7 v2 will be converted to FHIR before processing."
+    )
+    
+    # Map UI selection to adapter format
+    format_key = "HL7v2" if input_format == "HL7 v2 (ADT^A01)" else "FHIR"
+    
     # Regulation-specific example text
     if regulation == "HIPAA":
         default_text = (
@@ -309,12 +326,28 @@ with col_input:
             "IP: 192.168.1.1"
         )
     
-    input_text = st.text_area(
-        "Raw Clinical Text",
-        height=400,
-        value=default_text,
-        help="Paste raw patient notes or FHIR resources here."
-    )
+    if input_format == "HL7 v2 (ADT^A01)":
+        input_text = st.text_area(
+            "HL7 v2 Message",
+            height=400,
+            value="MSH|^~\\&|SendingApp|SendingFacility|ReceivingApp|ReceivingFacility|20240115120000||ADT^A01|12345|P|2.5\nPID|1||123456^^^MRN||DOE^JOHN^MIDDLE||19800115|M|||123 MAIN ST^^CITY^ST^12345||555-1234|||",
+            help="Paste HL7 v2 message here. Will be converted to FHIR before processing."
+        )
+    else:  # FHIR JSON
+        # Default FHIR example
+        default_fhir = {
+            "resourceType": "Patient",
+            "id": "example",
+            "name": [{"family": "Doe", "given": ["John"]}],
+            "birthDate": "1980-01-15",
+            "telecom": [{"system": "phone", "value": "555-1234"}]
+        }
+        input_text = st.text_area(
+            "FHIR JSON",
+            height=400,
+            value=json.dumps(default_fhir, indent=2),
+            help="Paste FHIR JSON resource or bundle here."
+        )
     
     analyze_btn = st.button("Analyze & Redact", type="primary", use_container_width=True)
 
@@ -330,7 +363,53 @@ if analyze_btn:
             st.write(f"📋 Applying {reg_info['name']} regulations...")
             st.write(f"🌍 Jurisdiction: {country_code}")
             
-            response = engine.generate_suggestion(input_text, regulation, country_code)
+            # Normalize input (HL7 → FHIR if needed)
+            try:
+                if format_key == "HL7v2":
+                    # HL7 is a string
+                    raw_payload = input_text
+                else:
+                    # FHIR is JSON - parse it (st.text_area always returns string)
+                    raw_payload = json.loads(input_text)
+                
+                normalized = normalize_input(
+                    payload=raw_payload,
+                    input_format=format_key,
+                )
+                fhir_bundle = normalized["bundle"]
+                input_provenance = normalized["metadata"]
+                
+                # Convert FHIR bundle to text for RedactionEngine (if it's a dict, stringify)
+                if isinstance(fhir_bundle, dict):
+                    # For now, convert to JSON string for text processing
+                    # In a full implementation, you'd process the FHIR bundle directly
+                    processed_text = json.dumps(fhir_bundle, indent=2)
+                else:
+                    processed_text = str(fhir_bundle)
+                
+                st.write(f"✓ Input normalized: {input_provenance.get('original_format', 'Unknown')}")
+                if input_provenance.get('original_format') == 'HL7v2':
+                    st.write(f"  Message type: {input_provenance.get('message_type', 'Unknown')}")
+                
+            except json.JSONDecodeError as e:
+                st.error(f"Invalid JSON format: {str(e)}")
+                st.stop()
+            except NotImplementedError as e:
+                st.error(f"HL7 conversion not yet implemented: {str(e)}")
+                st.info("For MVP, HL7 → FHIR conversion is delegated to Microsoft FHIR Converter.")
+                st.stop()
+            except Exception as e:
+                st.error(f"Input normalization failed: {str(e)}")
+                st.stop()
+            
+            # Process with RedactionEngine (currently expects text)
+            response = engine.generate_suggestion(processed_text, regulation, country_code)
+            
+            # Attach input provenance to response metadata
+            if 'audit_metadata' not in response:
+                response['audit_metadata'] = {}
+            response['audit_metadata']['input_provenance'] = input_provenance
+            
             st.session_state.current_result = response
             
             status.update(label="✓ Redaction Complete", state="complete", expanded=False)

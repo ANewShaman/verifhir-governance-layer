@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict, Any
 from datetime import datetime
 
 from verifhir.jurisdiction.models import JurisdictionContext
@@ -45,3 +45,6 @@ class AuditRecord:
 
     # Human accountability
     human_decision: HumanDecision
+
+    # Input provenance (HL7 → FHIR normalization metadata)
+    input_provenance: Optional[Dict[str, Any]] = None
