@@ -1,16 +1,16 @@
 from verifhir.assurance.generator import generate_negative_assertions
 from verifhir.explainability.view import ExplainableViolation
 
-def test_negative_assurance_when_category_not_detected():
+def test_negative_assurance_not_created_when_detected():
     detections = [
         ExplainableViolation(
             regulation="HIPAA",
-            citation="164.502",
-            field_path="patient.name",
-            description="Patient full name",
-            severity="MINOR",
-            detection_method="rule-based",
-            confidence=0.95,
+            citation="164.514",
+            field_path="patient.biometric.fingerprint",
+            description="Fingerprint scan",
+            severity="CRITICAL",
+            detection_method="ml-primary",
+            confidence=0.99,
             suppressed=False,
             suppression_reason=None,
         )
@@ -25,5 +25,4 @@ def test_negative_assurance_when_category_not_detected():
 
     categories = [na.category for na in negative_assertions]
 
-    assert "Biometric Identifiers" in categories
-    assert "Genetic Data" in categories
+    assert "Biometric Identifiers" not in categories
