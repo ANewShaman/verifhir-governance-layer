@@ -110,8 +110,6 @@ def test_governance_receives_fhir_only():
             from verifhir.api.main import verify_resource
             
             # VerifyRequest expects resource to be a dict (Pydantic validation)
-            # But in real flow, HL7 string would be passed before validation
-            # So we test with a dict that represents the raw input before normalization
             request = VerifyRequest(
                 resource={"raw": "MSH|^~\\&|..."},  # Simulated pre-normalization input
                 policy=PolicyRequest(
@@ -139,11 +137,9 @@ def test_governance_receives_fhir_only():
 
 def test_audit_builder_accepts_provenance():
     """Test that audit_builder accepts and attaches input_provenance."""
-    from verifhir.orchestrator.audit_builder import build_audit_record
+    # FIXED: Corrected import name to match verifhir/orchestrator/audit_builder.py
+    from verifhir.orchestrator.audit_builder import build_audit
     from verifhir.models.audit_record import HumanDecision
-    from verifhir.jurisdiction.models import JurisdictionContext
-    from verifhir.models.compliance_decision import ComplianceDecision
-    from verifhir.models.purpose import Purpose
     from datetime import datetime
     
     test_provenance = {
@@ -152,35 +148,24 @@ def test_audit_builder_accepts_provenance():
         "converter_version": "fhir-converter-v2.1.0"
     }
     
-    ctx = JurisdictionContext(source_country="US", destination_country="EU", data_subject_country="US")
-    # ComplianceDecision uses outcome, total_risk_score, risk_components, rationale
-    from verifhir.models.compliance_decision import ComplianceOutcome
-    decision = ComplianceDecision(
-        outcome=ComplianceOutcome.APPROVED,
-        total_risk_score=0.0,
-        risk_components=[],
-        rationale="No violations"
-    )
     human = HumanDecision(
         reviewer_id="test-reviewer",
         decision="APPROVED",
         rationale="Test",
         timestamp=datetime.utcnow()
     )
-    purpose = Purpose.RESEARCH  # Purpose is an Enum
     
-    audit = build_audit_record(
-        ctx=ctx,
-        decision=decision,
-        detections=[],
+    # FIXED: Updated parameters to match the build_audit signature
+    audit = build_audit(
+        input_data="MSH|^~\\&|...",
+        engine_version="VeriFHIR-0.9.3",
+        policy_snapshot_version="HIPAA-2025.1",
+        purpose="RESEARCH",
         human_decision=human,
-        dataset_fingerprint="test-fp",
-        record_hash="test-hash",
-        purpose=purpose,
-        input_provenance=test_provenance
+        input_provenance=test_provenance,
+        replay_mode=False
     )
     
     # Verify provenance is attached
     assert audit.input_provenance == test_provenance
     assert audit.input_provenance["original_format"] == "HL7v2"
-

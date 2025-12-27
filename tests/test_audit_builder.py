@@ -1,26 +1,10 @@
 from datetime import datetime
 import pytest
+import uuid
 
-from verifhir.jurisdiction.models import JurisdictionContext
-from verifhir.models.compliance_decision import ComplianceDecision
+# FIXED: Corrected import name to match audit_builder.py
+from verifhir.orchestrator.audit_builder import build_audit
 from verifhir.models.audit_record import HumanDecision
-from verifhir.models.purpose import Purpose
-from verifhir.orchestrator.audit_builder import build_audit_record
-
-def mock_jurisdiction_context():
-    return JurisdictionContext(
-        source_country="EU",
-        destination_country="US",
-        data_subject_country="FR",
-    )
-
-def mock_decision():
-    return ComplianceDecision(
-        outcome="APPROVED",
-        total_risk_score=0.1,
-        rationale="Low risk",
-        risk_components=[]
-    )
 
 def test_audit_creation_succeeds_with_human_decision():
     human = HumanDecision(
@@ -30,16 +14,18 @@ def test_audit_creation_succeeds_with_human_decision():
         timestamp=datetime.utcnow(),
     )
 
-    audit = build_audit_record(
-        ctx=mock_jurisdiction_context(),
-        decision=mock_decision(),
-        detections=[],
+    # FIXED: Updated arguments to match the signature in verifhir/orchestrator/audit_builder.py
+    # Removed mock_jurisdiction_context and Purpose as they are not in the target function's signature
+    audit = build_audit(
+        input_data="sample_hl7_data",
+        engine_version="VeriFHIR-0.9.3",
+        policy_snapshot_version="HIPAA-GDPR-2025.1",
+        purpose="RESEARCH",
         human_decision=human,
-        dataset_fingerprint="abc123",
-        record_hash="hash123",
-        purpose=Purpose.RESEARCH,
-        previous_record_hash=None,
+        input_provenance=None, # Placeholder as expected by the builder
+        replay_mode=False
     )
 
     assert audit.human_decision.reviewer_id == "reviewer-001"
-    assert audit.source_jurisdiction == "EU"
+    assert audit.input_fingerprint is not None
+    assert isinstance(uuid.UUID(audit.audit_id), uuid.UUID)

@@ -1,51 +1,54 @@
 from dataclasses import dataclass
-from typing import List, Optional, Literal, Dict, Any
 from datetime import datetime
+from typing import List, Optional, Literal
 
-from verifhir.jurisdiction.models import JurisdictionContext
-from verifhir.explainability.view import ExplainableViolation
-from verifhir.models.negative_assurance import NegativeAssertion
-from verifhir.models.purpose import Purpose
-from .compliance_decision import ComplianceDecision
+from verifhir.models.input_provenance import InputProvenance
 
 
+# =========================================================
+# DAY 25 / DAY 32 — Human accountability (RESTORED)
+# =========================================================
 @dataclass(frozen=True)
 class HumanDecision:
+    """
+    Explicit human attestation.
+    Stored inside the audit record (non-negotiable).
+    """
     reviewer_id: str
     decision: Literal["APPROVED", "NEEDS_REVIEW", "REJECTED"]
     rationale: str
     timestamp: datetime
 
 
+# =========================================================
+# DAY 32 — Canonical Audit Record
+# =========================================================
 @dataclass(frozen=True)
 class AuditRecord:
-    # Core identity
     audit_id: str
     timestamp: datetime
 
-    # Integrity
+    # Dataset + input integrity
     dataset_fingerprint: str
-    record_hash: str
+    input_fingerprint: str
 
-    # Versioning
+    # Hash integrity
+    record_hash: str
+    previous_record_hash: Optional[str]
+
+    # Version locking
     engine_version: str
     policy_snapshot_version: str
 
-    # Context
-    jurisdiction_context: JurisdictionContext
-    source_jurisdiction: str
-    destination_jurisdiction: str
-    purpose: Purpose
+    # Purpose & provenance
+    purpose: str
+    input_provenance: InputProvenance
 
-    # Evidence
-    decision: ComplianceDecision
-    detections: List[ExplainableViolation]
+    # Decision evidence
+    decision: object
+    detections: List
     detection_methods_used: List[str]
-    negative_assertions: List[NegativeAssertion]
+    negative_assertions: List
 
-    # Human accountability (MANDATORY)
+    # Human accountability (mandatory at creation time)
     human_decision: HumanDecision
-
-    # Optional fields (must come after all required fields)
-    previous_record_hash: Optional[str] = None
-    input_provenance: Optional[Dict[str, Any]] = None
