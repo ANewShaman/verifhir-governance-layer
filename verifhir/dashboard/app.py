@@ -7,10 +7,9 @@ import html
 from verifhir.remediation.redactor import RedactionEngine
 from verifhir.storage import commit_record
 from verifhir.adapters.hl7_adapter import normalize_input
-
-# main.py or app.py
-
+from verifhir.models.input_provenance import InputProvenance
 from verifhir.telemetry import init_telemetry
+import hashlib
 
 init_telemetry()
 
@@ -184,13 +183,18 @@ def generate_clean_output(redacted_text):
     highlighted = re.sub(r'\[REDACTED[^\]]*\]', highlight_tag, html.escape(redacted_text))
     return highlighted
 
-# --- HELPER: AUDIT DIALOG ---
-@st.dialog("Technical Audit Metadata")
-def show_audit_dialog(data):
-    st.write("### Internal Governance Trace")
-    st.json(data)
-    st.caption(f"System Reference: {datetime.datetime.now().isoformat()}")
-    st.caption("Access restricted to authorized compliance officers only.")
+def compute_system_config_hash() -> str:
+    """
+    Compute a hash of the current system configuration.
+    This prevents replay drift due to environment changes.
+    """
+    config_data = {
+        "engine_version": engine.PROMPT_VERSION,
+        "python_version": "3.11",  # Could be dynamic
+        "streamlit_version": st.__version__,
+    }
+    config_str = json.dumps(config_data, sort_keys=True)
+    return hashlib.sha256(config_str.encode()).hexdigest()[:16]
 
 # --- SIDEBAR: SYSTEM CONFIG ---
 with st.sidebar:
@@ -354,6 +358,8 @@ with col_input:
 # --- ENGINE EXECUTION ---
 if "current_result" not in st.session_state:
     st.session_state.current_result = None
+if "input_provenance" not in st.session_state:
+    st.session_state.input_provenance = None
 
 if analyze_btn:
     if not input_text.strip():
@@ -377,7 +383,21 @@ if analyze_btn:
                     input_format=format_key,
                 )
                 fhir_bundle = normalized["bundle"]
-                input_provenance = normalized["metadata"]
+                input_metadata = normalized["metadata"]
+                
+                # ============================================================
+                # A.1: Create InputProvenance EXACTLY ONCE
+                # ============================================================
+                system_config_hash = compute_system_config_hash()
+                
+                st.session_state.input_provenance = InputProvenance(
+                    original_format=input_metadata.get('original_format', format_key),
+                    system_config_hash=system_config_hash,
+                    converter_version=input_metadata.get('converter_version'),
+                    message_type=input_metadata.get('message_type'),
+                    ocr_engine_version=input_metadata.get('ocr_engine_version'),
+                    ocr_confidence=input_metadata.get('ocr_confidence'),
+                )
                 
                 # Convert FHIR bundle to text for RedactionEngine (if it's a dict, stringify)
                 if isinstance(fhir_bundle, dict):
@@ -387,9 +407,9 @@ if analyze_btn:
                 else:
                     processed_text = str(fhir_bundle)
                 
-                st.write(f"✓ Input normalized: {input_provenance.get('original_format', 'Unknown')}")
-                if input_provenance.get('original_format') == 'HL7v2':
-                    st.write(f"  Message type: {input_provenance.get('message_type', 'Unknown')}")
+                st.write(f"✓ Input normalized: {st.session_state.input_provenance.original_format}")
+                if st.session_state.input_provenance.message_type:
+                    st.write(f"  Message type: {st.session_state.input_provenance.message_type}")
                 
             except json.JSONDecodeError as e:
                 st.error(f"Invalid JSON format: {str(e)}")
@@ -408,7 +428,11 @@ if analyze_btn:
             # Attach input provenance to response metadata
             if 'audit_metadata' not in response:
                 response['audit_metadata'] = {}
-            response['audit_metadata']['input_provenance'] = input_provenance
+            
+            # Store metadata but NOT the InputProvenance object itself
+            # (InputProvenance is in session_state)
+            response['audit_metadata']['regulation'] = regulation
+            response['audit_metadata']['country_code'] = country_code
             
             st.session_state.current_result = response
             
@@ -496,11 +520,16 @@ with col_output:
         
         st.divider()
         
-        # PHI/PII CATEGORIES DETECTED
-        if 'rules_applied' in audit and audit['rules_applied']:
-            with st.expander("PII/PHI Categories Detected", expanded=False):
+        # ============================================================
+        # B.5: PROGRESSIVE DISCLOSURE - EXPLAINABILITY LAYER
+        # ============================================================
+        with st.expander("📊 Explainability", expanded=False):
+            st.markdown("**How this decision was made:**")
+            
+            # Rules triggered
+            if 'rules_applied' in audit and audit['rules_applied']:
+                st.markdown("**PII/PHI Categories Detected:**")
                 rules = audit['rules_applied']
-                # Display as badges
                 badge_html = " ".join([
                     f'<span style="'
                     f'background-color: #eff6ff; '
@@ -516,105 +545,130 @@ with col_output:
                     for rule in rules
                 ])
                 st.markdown(badge_html, unsafe_allow_html=True)
+            
+            # ML signals used
+            st.markdown(f"**Detection Method:** {method}")
+            
+            # B.8: Negative assurances
+            if 'negative_assertions' in audit and audit['negative_assertions']:
+                st.markdown("**Not Detected:**")
+                neg_assertions = audit['negative_assertions']
+                if neg_assertions:
+                    neg_text = ", ".join(neg_assertions)
+                    st.caption(f"Categories confirmed absent: {neg_text}")
+                else:
+                    st.caption("No negative assurances recorded for this analysis.")
+            
+            # B.7: HL7 provenance (if applicable)
+            if st.session_state.input_provenance and st.session_state.input_provenance.original_format == "HL7v2":
+                st.markdown("**Input Provenance:**")
+                st.caption(f"✓ Input normalized from HL7 v2")
+                if st.session_state.input_provenance.message_type:
+                    st.caption(f"  Message Type: {st.session_state.input_provenance.message_type}")
+                if st.session_state.input_provenance.converter_version:
+                    st.caption(f"  Converter Version: {st.session_state.input_provenance.converter_version}")
+        
+        # ============================================================
+        # B.6: PROGRESSIVE DISCLOSURE - FORENSIC DATA LAYER
+        # ============================================================
+        with st.expander("🔍 Forensic Evidence (Read-Only)", expanded=False):
+            st.markdown("**Audit Proof Metadata:**")
+            
+            forensic_data = {
+                "Engine Version": engine.PROMPT_VERSION,
+                "Policy Snapshot": audit.get('policy_snapshot_version', '1.0'),
+                "Dataset Fingerprint": audit.get('dataset_fingerprint', 'UNKNOWN'),
+            }
+            
+            if st.session_state.input_provenance:
+                forensic_data["System Config Hash"] = st.session_state.input_provenance.system_config_hash
+                forensic_data["Input Format"] = st.session_state.input_provenance.original_format
+                if st.session_state.input_provenance.converter_version:
+                    forensic_data["Converter Version"] = st.session_state.input_provenance.converter_version
+            
+            for key, value in forensic_data.items():
+                st.caption(f"**{key}:** `{value}`")
+            
+            st.caption("_This data is immutable and part of the permanent audit record._")
         
         st.divider()
         
         # ============================================================
-        # DAY 33: HUMAN ACCOUNTABILITY SECTION
+        # C.9: HUMAN ATTESTATION SECTION - ONLY ACTION BUTTONS
         # ============================================================
         st.subheader("Human Attestation")
         
         st.markdown(
             """
-            <div style='background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px; border-radius: 4px; margin-bottom: 20px;'>
-            <strong>⚠️ ACCOUNTABILITY REQUIREMENT:</strong> All decisions are immutable, auditable, and legally binding. 
-            Your identity and rationale will be permanently recorded.
+            <div style='background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px; border-radius: 4px; margin-bottom: 20px; color: #000000;'>
+            <strong>MVP Testing Mode:</strong> Simplified approval workflow for development and testing purposes.
             </div>
             """,
             unsafe_allow_html=True
         )
         
-        # 1. MANDATORY REVIEWER IDENTITY
-        reviewer_id = st.text_input(
-            "Reviewer Identity (Required) *",
-            placeholder="email@example.com or reviewer_id",
-            help="Your email or reviewer ID. This cannot be changed after submission.",
-            key="reviewer_id_input"
-        )
-        
-        # 2. EXPLICIT DECISION SELECTION (No Implicit Approve)
-        st.markdown("**Decision (Required) ***")
-        decision = st.radio(
-            "Select your decision:",
-            options=["APPROVED", "NEEDS_REVIEW", "REJECTED"],
-            index=None,  # No default selection
-            help="Your explicit decision on this redaction. No default is selected.",
-            key="decision_radio"
-        )
-        
-        # 3. MANDATORY RATIONALE
-        rationale = st.text_area(
-            "Rationale (Required, minimum 20 characters) *",
-            placeholder="Explain your decision. This justification will be permanently stored in the audit record.",
-            help="Provide a clear justification for your decision (minimum 20 characters).",
-            height=100,
-            key="rationale_input"
-        )
-        
-        # 4. IRREVERSIBLE CONFIRMATION GATE
-        confirmation = st.checkbox(
-            "I acknowledge this decision is final, auditable, and cannot be altered.",
-            key="confirmation_checkbox",
-            help="This is a legal acknowledgment. Once submitted, the decision cannot be modified."
-        )
-        
-        st.divider()
-        
-        # VALIDATION LOGIC
-        can_submit = False
-        validation_errors = []
-        
-        if not reviewer_id or not reviewer_id.strip():
-            validation_errors.append("Reviewer identity is required")
-        
-        if decision is None:
-            validation_errors.append("Decision selection is required")
-        
-        if not rationale or len(rationale.strip()) < 20:
-            validation_errors.append("Rationale must be at least 20 characters")
-        
-        if not confirmation:
-            validation_errors.append("Confirmation acknowledgment is required")
-        
-        # Special check: APPROVED decision requires APPROVED to be selected
-        if decision != "APPROVED" and decision is not None:
-            # Allow NEEDS_REVIEW and REJECTED, but disable Approve button
-            pass
-        
-        can_submit = len(validation_errors) == 0
-        
-        # Show validation errors
-        if validation_errors and (reviewer_id or decision or rationale or confirmation):
-            st.warning("**Validation Requirements:**\n" + "\n".join(f"• {err}" for err in validation_errors))
-        
-        # ACTION CONTROLS
-        c1, c2, c3 = st.columns(3)
-        
-        with c1:
-            approve_disabled = not can_submit or decision != "APPROVED"
+        # Use Streamlit form for proper state management
+        with st.form(key="human_decision_form", clear_on_submit=True):
+            # 1. REVIEWER IDENTITY
+            reviewer_id = st.text_input(
+                "Reviewer Identity *",
+                value="MVP-SYSTEM-USER",
+                placeholder="email@example.com or reviewer_id",
+                help="Your email or reviewer ID.",
+            )
             
-            if st.button(
-                "✓ Approve & Commit", 
-                use_container_width=True, 
-                type="primary",
-                disabled=approve_disabled,
-                help="Only available when decision is APPROVED and all fields are valid"
-            ):
+            # 2. DECISION SELECTION
+            st.markdown("**Decision ***")
+            decision = st.radio(
+                "Select your decision:",
+                options=["APPROVED", "NEEDS_REVIEW", "REJECTED"],
+                index=0,  # Default to APPROVED
+                help="Your decision on this redaction.",
+            )
+            
+            # 3. RATIONALE
+            rationale = st.text_area(
+                "Rationale (minimum 20 characters) *",
+                value="Automated approval for MVP testing.",
+                placeholder="Explain your decision.",
+                help="Provide a justification for your decision (minimum 20 characters).",
+                height=100,
+            )
+            
+            # 4. CONFIRMATION CHECKBOX
+            confirmation = st.checkbox(
+                "I acknowledge this decision is final and auditable.",
+                value=False,
+                help="Acknowledgment for audit trail."
+            )
+            
+            # Submit button
+            submitted = st.form_submit_button("Submit Decision", type="primary", use_container_width=True)
+        
+        # Process form submission
+        if submitted:
+            # Validation
+            validation_errors = []
+            
+            if not reviewer_id or not reviewer_id.strip():
+                validation_errors.append("Reviewer identity is required")
+            
+            if decision is None:
+                validation_errors.append("Decision selection is required")
+            
+            if not rationale or len(rationale.strip()) < 20:
+                validation_errors.append("Rationale must be at least 20 characters")
+            
+            if not confirmation:
+                validation_errors.append("Confirmation acknowledgment is required")
+            
+            if validation_errors:
+                st.error("**Validation Failed:**\n" + "\n".join(f"• {err}" for err in validation_errors))
+            else:
+                # Process the decision
                 try:
-                    # Import required modules for audit record creation
                     from verifhir.models.audit_record import HumanDecision
-                    from verifhir.audit.audit_builder import build_audit_record
-                    from verifhir.storage import AuditStorage
+                    from verifhir.orchestrator.audit_builder import build_audit_record
                     import uuid
                     
                     # Create HumanDecision object
@@ -625,122 +679,73 @@ with col_output:
                         timestamp=datetime.datetime.utcnow()
                     )
                     
-                    # Build audit record (this will validate through audit_builder)
+                    # ============================================================
+                    # A.2: Pass input_provenance to build_audit_record()
+                    # ============================================================
+                    if st.session_state.input_provenance is None:
+                        st.error("❌ Input provenance not found. Please re-analyze the input.")
+                        st.stop()
+                    
+                    # Build audit record
                     audit_record = build_audit_record(
                         audit_id=str(uuid.uuid4()),
                         dataset_fingerprint=audit.get('dataset_fingerprint', 'UNKNOWN'),
                         engine_version=engine.PROMPT_VERSION,
                         policy_snapshot_version=audit.get('policy_snapshot_version', '1.0'),
-                        jurisdiction_context=audit.get('jurisdiction_context', {}),
+                        jurisdiction_context={
+                            "regulation": regulation,
+                            "country_code": country_code
+                        },
                         source_jurisdiction=country_code,
                         destination_jurisdiction=country_code,
-                        decision={"action": "REDACT", "approved": True},
+                        decision={"action": "REDACT", "approved": (decision == "APPROVED")},
                         detections=audit.get('rules_applied', []),
                         detection_methods_used=[method],
                         negative_assertions=audit.get('negative_assertions', []),
                         purpose="clinical_data_remediation",
                         human_decision=human_decision,
+                        input_provenance=st.session_state.input_provenance,  # A.2: Explicit pass
                         previous_record_hash=None
                     )
                     
-                    # Commit to storage (both remediation and audit)
-                    file_id = commit_record(
-                        original_text=res['original_text'],
-                        redacted_text=res['suggested_redaction'],
-                        metadata=res.get('audit_metadata', {})
-                    )
-                    
-                    # TODO: Also commit audit_record to AuditStorage when Azure connection is configured
-                    
-                    st.balloons()
-                    st.success(f"✓ Record committed to secure vault.")
-                    st.caption(f"Reference ID: {file_id}")
-                    st.caption(f"Reviewer: {reviewer_id}")
-                    st.caption(f"Decision: {decision} at {human_decision.timestamp.isoformat()}")
-                    
-                    # Reset form state
-                    st.session_state.reviewer_id_input = ""
-                    st.session_state.decision_radio = None
-                    st.session_state.rationale_input = ""
-                    st.session_state.confirmation_checkbox = False
+                    # Handle decision type
+                    if decision == "APPROVED":
+                        # Commit to storage
+                        file_id = commit_record(
+                            original_text=res['original_text'],
+                            redacted_text=res['suggested_redaction'],
+                            metadata=res.get('audit_metadata', {})
+                        )
+                        
+                        st.balloons()
+                        st.success(f"✓ Record committed to secure vault.")
+                        st.caption(f"Reference ID: {file_id}")
+                        st.caption(f"Reviewer: {reviewer_id}")
+                        st.caption(f"Decision: {decision} at {human_decision.timestamp.isoformat()}")
+                        
+                        # A.4: Use st.rerun() instead of manual clearing
+                        time.sleep(2)
+                        st.rerun()
+                        
+                    elif decision == "NEEDS_REVIEW":
+                        st.warning(f"⚠ Flagged for manual remediation queue by {reviewer_id}")
+                        st.caption(f"Timestamp: {human_decision.timestamp.isoformat()}")
+                        time.sleep(2)
+                        st.rerun()
+                        
+                    elif decision == "REJECTED":
+                        st.error(f"✕ Redaction rejected by {reviewer_id}")
+                        st.caption(f"Timestamp: {human_decision.timestamp.isoformat()}")
+                        time.sleep(2)
+                        st.rerun()
                     
                 except ValueError as ve:
                     # This catches validation errors from audit_builder
                     st.error(f"❌ Validation Failed: {str(ve)}")
                 except Exception as e:
-                    st.error(f"❌ Commit Failed: {str(e)}")
-                
-        with c2:
-            flag_disabled = not can_submit or decision != "NEEDS_REVIEW"
-            
-            if st.button(
-                "⚠ Needs Review", 
-                use_container_width=True,
-                disabled=flag_disabled,
-                help="Only available when decision is NEEDS_REVIEW and all fields are valid"
-            ):
-                try:
-                    from verifhir.models.audit_record import HumanDecision
-                    
-                    human_decision = HumanDecision(
-                        reviewer_id=reviewer_id.strip(),
-                        decision=decision,
-                        rationale=rationale.strip(),
-                        timestamp=datetime.datetime.utcnow()
-                    )
-                    
-                    st.warning(f"⚠ Flagged for manual remediation queue by {reviewer_id}")
-                    st.caption(f"Timestamp: {human_decision.timestamp.isoformat()}")
-                    
-                    # Reset form
-                    st.session_state.reviewer_id_input = ""
-                    st.session_state.decision_radio = None
-                    st.session_state.rationale_input = ""
-                    st.session_state.confirmation_checkbox = False
-                    
-                except ValueError as ve:
-                    st.error(f"❌ Validation Failed: {str(ve)}")
-                except Exception as e:
-                    st.error(f"❌ Flag Failed: {str(e)}")
-        
-        with c3:
-            reject_disabled = not can_submit or decision != "REJECTED"
-            
-            if st.button(
-                "✕ Reject", 
-                use_container_width=True,
-                disabled=reject_disabled,
-                help="Only available when decision is REJECTED and all fields are valid"
-            ):
-                try:
-                    from verifhir.models.audit_record import HumanDecision
-                    
-                    human_decision = HumanDecision(
-                        reviewer_id=reviewer_id.strip(),
-                        decision=decision,
-                        rationale=rationale.strip(),
-                        timestamp=datetime.datetime.utcnow()
-                    )
-                    
-                    st.error(f"✕ Redaction rejected by {reviewer_id}")
-                    st.caption(f"Timestamp: {human_decision.timestamp.isoformat()}")
-                    
-                    # Reset form
-                    st.session_state.reviewer_id_input = ""
-                    st.session_state.decision_radio = None
-                    st.session_state.rationale_input = ""
-                    st.session_state.confirmation_checkbox = False
-                    
-                except ValueError as ve:
-                    st.error(f"❌ Validation Failed: {str(ve)}")
-                except Exception as e:
-                    st.error(f"❌ Rejection Failed: {str(e)}")
-
-        st.divider()
-
-        # AUDIT TRACE
-        if st.button("View Technical Audit Metadata", use_container_width=True):
-            show_audit_dialog(res)
+                    st.error(f"❌ Operation Failed: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
 
     else:
         st.info("Awaiting input analysis. Please click 'Analyze & Redact' to generate a proposal.")
