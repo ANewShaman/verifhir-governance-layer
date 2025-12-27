@@ -1,0 +1,20 @@
+{
+  "record_id": "17095431b6c8d02b",
+  "timestamp": "2025-12-26T19:20:52.117917",
+  "status": "COMMITTED",
+  "metadata": {
+    "timestamp": "2025-12-26T19:19:17.534138+00:00",
+    "elapsed_seconds": 11.051,
+    "model": "verifhir-gpt-4o",
+    "regulation": "HIPAA",
+    "validation": "passed",
+    "regulation_context": "HIPAA",
+    "input_provenance": {
+      "original_format": "FHIR"
+    }
+  },
+  "data": {
+    "original_text_length": 254,
+    "redacted_text": "{  \n  \"resourceType\": \"Patient\",  \n  \"id\": \"[REDACTED ID]\",  \n  \"name\": [  \n    {  \n      \"family\": \"[REDACTED NAME]\",  \n      \"given\": [  \n        \"[REDACTED NAME]\"  \n      ]  \n    }  \n  ],  \n  \"birthDate\": \"[REDACTED DATE]\",  \n  \"telecom\": [  \n    {  \n      \"system\": \"phone\",  \n      \"value\": \"[REDACTED PHONE]\"  \n    }  \n  ]  \n}  \n\n] ] ]"
+  }
+}
