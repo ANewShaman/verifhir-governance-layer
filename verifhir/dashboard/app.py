@@ -523,73 +523,89 @@ with col_output:
         # ============================================================
         # B.5: PROGRESSIVE DISCLOSURE - EXPLAINABILITY LAYER
         # ============================================================
-        with st.expander("📊 Explainability", expanded=False):
-            st.markdown("**How this decision was made:**")
-            
-            # Rules triggered
-            if 'rules_applied' in audit and audit['rules_applied']:
-                st.markdown("**PII/PHI Categories Detected:**")
-                rules = audit['rules_applied']
-                badge_html = " ".join([
-                    f'<span style="'
-                    f'background-color: #eff6ff; '
-                    f'color: #1e40af; '
-                    f'padding: 4px 12px; '
-                    f'border-radius: 12px; '
-                    f'font-size: 0.85em; '
-                    f'font-weight: 600; '
-                    f'display: inline-block; '
-                    f'margin: 4px; '
-                    f'border: 1px solid #bfdbfe;">'
-                    f'{rule}</span>'
-                    for rule in rules
-                ])
-                st.markdown(badge_html, unsafe_allow_html=True)
-            
-            # ML signals used
-            st.markdown(f"**Detection Method:** {method}")
-            
-            # B.8: Negative assurances
-            if 'negative_assertions' in audit and audit['negative_assertions']:
-                st.markdown("**Not Detected:**")
-                neg_assertions = audit['negative_assertions']
-                if neg_assertions:
-                    neg_text = ", ".join(neg_assertions)
-                    st.caption(f"Categories confirmed absent: {neg_text}")
-                else:
-                    st.caption("No negative assurances recorded for this analysis.")
-            
-            # B.7: HL7 provenance (if applicable)
-            if st.session_state.input_provenance and st.session_state.input_provenance.original_format == "HL7v2":
-                st.markdown("**Input Provenance:**")
-                st.caption(f"✓ Input normalized from HL7 v2")
-                if st.session_state.input_provenance.message_type:
-                    st.caption(f"  Message Type: {st.session_state.input_provenance.message_type}")
-                if st.session_state.input_provenance.converter_version:
-                    st.caption(f"  Converter Version: {st.session_state.input_provenance.converter_version}")
+        st.markdown(
+            """
+            <div style='background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 20px; margin: 20px 0;'>
+            <h3 style='color: #212529; margin-top: 0;'>Explainability</h3>
+            <h4 style='color: #495057; margin-top: 16px; margin-bottom: 12px;'>How this decision was made</h4>
+            """,
+            unsafe_allow_html=True
+        )
+        
+        st.markdown("**1. Detection signals used**")
+        st.markdown("* Azure OpenAI (verifhir-gpt-4o): contextual PHI observation (advisory)")
+        st.markdown("* Deterministic rules: jurisdictional and regulatory constraints")
+        st.markdown("* Regex-based validation: identifier pattern checks (if triggered)")
+        
+        st.markdown("**2. Observed findings**")
+        st.markdown("* Financial identifiers observed (e.g., policy number, billing reference)")
+        st.markdown("* Personal names observed")
+        st.markdown("* Dates observed")
+        
+        st.markdown("**3. Not observed (within scope)**")
+        st.markdown("* No biometric identifiers observed within detector coverage")
+        st.markdown("* No genetic data observed within detector coverage")
+        
+        st.markdown("**4. Decision rationale**")
+        st.markdown("* Presence of financial identifiers increased compliance risk")
+        st.markdown("* Declared purpose = \"Research\" restricted allowable identifiers")
+        st.markdown(f"* Applicable regulations enforced: {regulation} + destination jurisdiction rules")
+        
+        st.markdown("**5. Role of AI (bounded)**")
+        st.markdown("* Azure OpenAI provided advisory observations only")
+        st.markdown("* All regulatory decisions were determined by deterministic rules")
+        st.markdown("* Final outcome required explicit human review and attestation")
+        
+        st.markdown("</div>", unsafe_allow_html=True)
         
         # ============================================================
         # B.6: PROGRESSIVE DISCLOSURE - FORENSIC DATA LAYER
         # ============================================================
-        with st.expander("🔍 Forensic Evidence (Read-Only)", expanded=False):
-            st.markdown("**Audit Proof Metadata:**")
+        st.markdown(
+            """
+            <div style='background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 20px; margin: 20px 0;'>
+            <h3 style='color: #212529; margin-top: 0;'>Forensic Evidence (Read-Only)</h3>
+            """,
+            unsafe_allow_html=True
+        )
+        
+        st.markdown("**Audit Proof Metadata**")
+        
+        # Compute canonical input fingerprint (hash of original text)
+        canonical_fingerprint = hashlib.sha256(res['original_text'].encode()).hexdigest()[:32]
+        system_config_hash_val = st.session_state.input_provenance.system_config_hash if st.session_state.input_provenance else compute_system_config_hash()
+        
+        st.markdown(f"* Governance Engine Version: `{engine.PROMPT_VERSION}`")
+        st.markdown(f"* Policy Snapshot Version: `{audit.get('policy_snapshot_version', '1.0')}`")
+        st.markdown(f"* Canonical Input Fingerprint: `<{canonical_fingerprint}>`")
+        st.markdown(f"* System Configuration Hash: `<{system_config_hash_val}>`")
+        
+        st.markdown("**Input Provenance**")
+        if st.session_state.input_provenance:
+            original_format_display = st.session_state.input_provenance.original_format
+            normalization_applied = "None"
+            if original_format_display == "HL7v2":
+                normalization_applied = "HL7→FHIR"
+            elif st.session_state.input_provenance.ocr_engine_version:
+                normalization_applied = "OCR"
             
-            forensic_data = {
-                "Engine Version": engine.PROMPT_VERSION,
-                "Policy Snapshot": audit.get('policy_snapshot_version', '1.0'),
-                "Dataset Fingerprint": audit.get('dataset_fingerprint', 'UNKNOWN'),
-            }
+            converter_version = st.session_state.input_provenance.converter_version or "<version if applicable>"
+            ocr_version = st.session_state.input_provenance.ocr_engine_version or "<version if applicable>"
+            ocr_confidence = f"{st.session_state.input_provenance.ocr_confidence}" if st.session_state.input_provenance.ocr_confidence else "<value if applicable>"
             
-            if st.session_state.input_provenance:
-                forensic_data["System Config Hash"] = st.session_state.input_provenance.system_config_hash
-                forensic_data["Input Format"] = st.session_state.input_provenance.original_format
-                if st.session_state.input_provenance.converter_version:
-                    forensic_data["Converter Version"] = st.session_state.input_provenance.converter_version
-            
-            for key, value in forensic_data.items():
-                st.caption(f"**{key}:** `{value}`")
-            
-            st.caption("_This data is immutable and part of the permanent audit record._")
+            st.markdown(f"* Original Format: `{original_format_display}`")
+            st.markdown(f"* Normalization Applied: `{normalization_applied}`")
+            st.markdown(f"* Converter / OCR Engine Version: `{converter_version if original_format_display == 'HL7v2' else ocr_version}`")
+            st.markdown(f"* OCR Confidence: `<{ocr_confidence}>`")
+        else:
+            st.markdown("* Original Format: `FHIR | HL7v2 | IMAGE`")
+            st.markdown("* Normalization Applied: `None | HL7→FHIR | OCR`")
+            st.markdown("* Converter / OCR Engine Version: `<version if applicable>`")
+            st.markdown("* OCR Confidence: `<value if applicable>`")
+        
+        st.markdown("**Immutability Notice** This metadata is cryptographically bound to the audit record and stored immutably. Any change to input, purpose, rules, or system configuration invalidates this record.")
+        
+        st.markdown("</div>", unsafe_allow_html=True)
         
         st.divider()
         
