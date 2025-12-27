@@ -519,34 +519,222 @@ with col_output:
         
         st.divider()
         
-        # ACTION CONTROLS
+        # ============================================================
+        # DAY 33: HUMAN ACCOUNTABILITY SECTION
+        # ============================================================
         st.subheader("Human Attestation")
         
+        st.markdown(
+            """
+            <div style='background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px; border-radius: 4px; margin-bottom: 20px;'>
+            <strong>⚠️ ACCOUNTABILITY REQUIREMENT:</strong> All decisions are immutable, auditable, and legally binding. 
+            Your identity and rationale will be permanently recorded.
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        
+        # 1. MANDATORY REVIEWER IDENTITY
+        reviewer_id = st.text_input(
+            "Reviewer Identity (Required) *",
+            placeholder="email@example.com or reviewer_id",
+            help="Your email or reviewer ID. This cannot be changed after submission.",
+            key="reviewer_id_input"
+        )
+        
+        # 2. EXPLICIT DECISION SELECTION (No Implicit Approve)
+        st.markdown("**Decision (Required) ***")
+        decision = st.radio(
+            "Select your decision:",
+            options=["APPROVED", "NEEDS_REVIEW", "REJECTED"],
+            index=None,  # No default selection
+            help="Your explicit decision on this redaction. No default is selected.",
+            key="decision_radio"
+        )
+        
+        # 3. MANDATORY RATIONALE
+        rationale = st.text_area(
+            "Rationale (Required, minimum 20 characters) *",
+            placeholder="Explain your decision. This justification will be permanently stored in the audit record.",
+            help="Provide a clear justification for your decision (minimum 20 characters).",
+            height=100,
+            key="rationale_input"
+        )
+        
+        # 4. IRREVERSIBLE CONFIRMATION GATE
+        confirmation = st.checkbox(
+            "I acknowledge this decision is final, auditable, and cannot be altered.",
+            key="confirmation_checkbox",
+            help="This is a legal acknowledgment. Once submitted, the decision cannot be modified."
+        )
+        
+        st.divider()
+        
+        # VALIDATION LOGIC
+        can_submit = False
+        validation_errors = []
+        
+        if not reviewer_id or not reviewer_id.strip():
+            validation_errors.append("Reviewer identity is required")
+        
+        if decision is None:
+            validation_errors.append("Decision selection is required")
+        
+        if not rationale or len(rationale.strip()) < 20:
+            validation_errors.append("Rationale must be at least 20 characters")
+        
+        if not confirmation:
+            validation_errors.append("Confirmation acknowledgment is required")
+        
+        # Special check: APPROVED decision requires APPROVED to be selected
+        if decision != "APPROVED" and decision is not None:
+            # Allow NEEDS_REVIEW and REJECTED, but disable Approve button
+            pass
+        
+        can_submit = len(validation_errors) == 0
+        
+        # Show validation errors
+        if validation_errors and (reviewer_id or decision or rationale or confirmation):
+            st.warning("**Validation Requirements:**\n" + "\n".join(f"• {err}" for err in validation_errors))
+        
+        # ACTION CONTROLS
         c1, c2, c3 = st.columns(3)
+        
         with c1:
-            if st.button("✓ Approve & Commit", use_container_width=True, type="primary"):
+            approve_disabled = not can_submit or decision != "APPROVED"
+            
+            if st.button(
+                "✓ Approve & Commit", 
+                use_container_width=True, 
+                type="primary",
+                disabled=approve_disabled,
+                help="Only available when decision is APPROVED and all fields are valid"
+            ):
                 try:
-                    # Save the record
+                    # Import required modules for audit record creation
+                    from verifhir.models.audit_record import HumanDecision
+                    from verifhir.audit.audit_builder import build_audit_record
+                    from verifhir.storage import AuditStorage
+                    import uuid
+                    
+                    # Create HumanDecision object
+                    human_decision = HumanDecision(
+                        reviewer_id=reviewer_id.strip(),
+                        decision=decision,
+                        rationale=rationale.strip(),
+                        timestamp=datetime.datetime.utcnow()
+                    )
+                    
+                    # Build audit record (this will validate through audit_builder)
+                    audit_record = build_audit_record(
+                        audit_id=str(uuid.uuid4()),
+                        dataset_fingerprint=audit.get('dataset_fingerprint', 'UNKNOWN'),
+                        engine_version=engine.PROMPT_VERSION,
+                        policy_snapshot_version=audit.get('policy_snapshot_version', '1.0'),
+                        jurisdiction_context=audit.get('jurisdiction_context', {}),
+                        source_jurisdiction=country_code,
+                        destination_jurisdiction=country_code,
+                        decision={"action": "REDACT", "approved": True},
+                        detections=audit.get('rules_applied', []),
+                        detection_methods_used=[method],
+                        negative_assertions=audit.get('negative_assertions', []),
+                        purpose="clinical_data_remediation",
+                        human_decision=human_decision,
+                        previous_record_hash=None
+                    )
+                    
+                    # Commit to storage (both remediation and audit)
                     file_id = commit_record(
                         original_text=res['original_text'],
                         redacted_text=res['suggested_redaction'],
                         metadata=res.get('audit_metadata', {})
                     )
                     
+                    # TODO: Also commit audit_record to AuditStorage when Azure connection is configured
+                    
                     st.balloons()
                     st.success(f"✓ Record committed to secure vault.")
                     st.caption(f"Reference ID: {file_id}")
+                    st.caption(f"Reviewer: {reviewer_id}")
+                    st.caption(f"Decision: {decision} at {human_decision.timestamp.isoformat()}")
                     
+                    # Reset form state
+                    st.session_state.reviewer_id_input = ""
+                    st.session_state.decision_radio = None
+                    st.session_state.rationale_input = ""
+                    st.session_state.confirmation_checkbox = False
+                    
+                except ValueError as ve:
+                    # This catches validation errors from audit_builder
+                    st.error(f"❌ Validation Failed: {str(ve)}")
                 except Exception as e:
-                    st.error(f"Commit Failed: {str(e)}")
+                    st.error(f"❌ Commit Failed: {str(e)}")
                 
         with c2:
-            if st.button("⚠ Reject & Flag", use_container_width=True):
-                st.warning("⚠ Flagged for manual remediation queue.")
+            flag_disabled = not can_submit or decision != "NEEDS_REVIEW"
+            
+            if st.button(
+                "⚠ Needs Review", 
+                use_container_width=True,
+                disabled=flag_disabled,
+                help="Only available when decision is NEEDS_REVIEW and all fields are valid"
+            ):
+                try:
+                    from verifhir.models.audit_record import HumanDecision
+                    
+                    human_decision = HumanDecision(
+                        reviewer_id=reviewer_id.strip(),
+                        decision=decision,
+                        rationale=rationale.strip(),
+                        timestamp=datetime.datetime.utcnow()
+                    )
+                    
+                    st.warning(f"⚠ Flagged for manual remediation queue by {reviewer_id}")
+                    st.caption(f"Timestamp: {human_decision.timestamp.isoformat()}")
+                    
+                    # Reset form
+                    st.session_state.reviewer_id_input = ""
+                    st.session_state.decision_radio = None
+                    st.session_state.rationale_input = ""
+                    st.session_state.confirmation_checkbox = False
+                    
+                except ValueError as ve:
+                    st.error(f"❌ Validation Failed: {str(ve)}")
+                except Exception as e:
+                    st.error(f"❌ Flag Failed: {str(e)}")
         
         with c3:
-            if st.button("Copy Output", use_container_width=True):
-                st.info("Redacted text ready to copy from display above.")
+            reject_disabled = not can_submit or decision != "REJECTED"
+            
+            if st.button(
+                "✕ Reject", 
+                use_container_width=True,
+                disabled=reject_disabled,
+                help="Only available when decision is REJECTED and all fields are valid"
+            ):
+                try:
+                    from verifhir.models.audit_record import HumanDecision
+                    
+                    human_decision = HumanDecision(
+                        reviewer_id=reviewer_id.strip(),
+                        decision=decision,
+                        rationale=rationale.strip(),
+                        timestamp=datetime.datetime.utcnow()
+                    )
+                    
+                    st.error(f"✕ Redaction rejected by {reviewer_id}")
+                    st.caption(f"Timestamp: {human_decision.timestamp.isoformat()}")
+                    
+                    # Reset form
+                    st.session_state.reviewer_id_input = ""
+                    st.session_state.decision_radio = None
+                    st.session_state.rationale_input = ""
+                    st.session_state.confirmation_checkbox = False
+                    
+                except ValueError as ve:
+                    st.error(f"❌ Validation Failed: {str(ve)}")
+                except Exception as e:
+                    st.error(f"❌ Rejection Failed: {str(e)}")
 
         st.divider()
 

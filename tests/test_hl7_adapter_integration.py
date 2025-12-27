@@ -137,35 +137,45 @@ def test_governance_receives_fhir_only():
 
 def test_audit_builder_accepts_provenance():
     """Test that audit_builder accepts and attaches input_provenance."""
-    # FIXED: Corrected import name to match verifhir/orchestrator/audit_builder.py
-    from verifhir.orchestrator.audit_builder import build_audit
+    from verifhir.orchestrator.audit_builder import build_audit_record
     from verifhir.models.audit_record import HumanDecision
+    from verifhir.models.input_provenance import InputProvenance
     from datetime import datetime
     
-    test_provenance = {
-        "original_format": "HL7v2",
-        "message_type": "ADT^A01",
-        "converter_version": "fhir-converter-v2.1.0"
-    }
+    # InputProvenance must be an object, not a dict
+    test_provenance = InputProvenance(
+        original_format="HL7v2",
+        message_type="ADT^A01",
+        converter_version="fhir-converter-v2.1.0",
+        system_config_hash="TEST_HASH"
+    )
     
+    # Rationale must be at least 20 characters
     human = HumanDecision(
         reviewer_id="test-reviewer",
         decision="APPROVED",
-        rationale="Test",
+        rationale="This is a sufficiently long rationale for the test audit.",
         timestamp=datetime.utcnow()
     )
     
-    # FIXED: Updated parameters to match the build_audit signature
-    audit = build_audit(
-        input_data="MSH|^~\\&|...",
+    # All keyword-only arguments required by audit_builder.py must be provided
+    audit = build_audit_record(
+        audit_id="test-123",
+        dataset_fingerprint="fingerprint-123",
         engine_version="VeriFHIR-0.9.3",
         policy_snapshot_version="HIPAA-2025.1",
+        jurisdiction_context={},
+        source_jurisdiction="US",
+        destination_jurisdiction="US",
+        decision={"outcome": "PASS"},
+        detections=[],
+        detection_methods_used=["rules"],
+        negative_assertions=[],
         purpose="RESEARCH",
         human_decision=human,
-        input_provenance=test_provenance,
-        replay_mode=False
+        input_provenance=test_provenance
     )
     
-    # Verify provenance is attached
+    # Verify provenance is correctly attached
     assert audit.input_provenance == test_provenance
-    assert audit.input_provenance["original_format"] == "HL7v2"
+    assert audit.input_provenance.original_format == "HL7v2"

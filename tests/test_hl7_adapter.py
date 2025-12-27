@@ -6,7 +6,7 @@ These tests verify that:
 2. FHIR bypasses the adapter
 3. No HL7 semantics leak downstream
 """
-from verifhir.orchestrator.audit_builder import build_audit
+from verifhir.orchestrator.audit_builder import build_audit_record
 import pytest
 from verifhir.adapters.hl7_adapter import (
     normalize_input,

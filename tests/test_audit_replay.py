@@ -76,7 +76,7 @@ def base_audit(sample_hl7):
 def test_hl7_replay_is_deterministic(base_audit, sample_hl7, mocker, system_config_hash):
     mocker.patch("verifhir.audit.replay.reconvert_hl7", return_value=sample_hl7)
     # Mock build_audit to return the base_audit to satisfy the record_hash check
-    mocker.patch("verifhir.audit.replay.build_audit", return_value=base_audit)
+    mocker.patch("verifhir.audit.replay.build_audit_record", return_value=base_audit)
 
     replayed = replay_audit(base_audit, provided_input=sample_hl7)
     assert replayed.record_hash == base_audit.record_hash
@@ -100,7 +100,7 @@ def test_replay_never_calls_live_ai(base_audit, sample_hl7, mocker, system_confi
     """
     Verifies that the builder is invoked in replay_mode, which bypasses AI logic.
     """
-    mock_builder = mocker.patch("verifhir.audit.replay.build_audit", return_value=base_audit)
+    mock_builder = mocker.patch("verifhir.audit.replay.build_audit_record", return_value=base_audit)
     mocker.patch("verifhir.audit.replay.reconvert_hl7", return_value=sample_hl7)
 
     replay_audit(base_audit, provided_input=sample_hl7)
@@ -110,7 +110,7 @@ def test_replay_never_calls_live_ai(base_audit, sample_hl7, mocker, system_confi
 
 def test_replay_is_read_only(base_audit, sample_hl7, mocker, system_config_hash):
     mocker.patch("verifhir.audit.replay.reconvert_hl7", return_value=sample_hl7)
-    mocker.patch("verifhir.audit.replay.build_audit", return_value=base_audit)
+    mocker.patch("verifhir.audit.replay.build_audit_record", return_value=base_audit)
 
     replayed = replay_audit(base_audit, provided_input=sample_hl7)
     # Replay logic specifically clears the chain link for safety

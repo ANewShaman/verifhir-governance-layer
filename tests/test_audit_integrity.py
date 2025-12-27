@@ -130,35 +130,41 @@ def test_governance_receives_fhir_only():
 
 def test_audit_builder_accepts_provenance():
     """Test that audit_builder accepts and attaches input_provenance."""
-    # FIXED: Corrected import to build_audit
-    from verifhir.orchestrator.audit_builder import build_audit
+    from verifhir.orchestrator.audit_builder import build_audit_record
     from verifhir.models.audit_record import HumanDecision
+    from verifhir.models.input_provenance import InputProvenance
     from datetime import datetime
     
-    test_provenance = {
-        "original_format": "HL7v2",
-        "message_type": "ADT^A01",
-        "converter_version": "fhir-converter-v2.1.0"
-    }
+    test_provenance = InputProvenance(
+        original_format="HL7v2",
+        message_type="ADT^A01",
+        converter_version="fhir-converter-v2.1.0",
+        system_config_hash="TEST_HASH"
+    )
     
     human = HumanDecision(
         reviewer_id="test-reviewer",
         decision="APPROVED",
-        rationale="Test",
+        rationale="This is a sufficiently long rationale for the test.",
         timestamp=datetime.utcnow()
     )
     
-    # FIXED: Updated call to match build_audit signature
-    audit = build_audit(
-        input_data="MSH|^~\\&|...",
+    audit = build_audit_record(
+        audit_id="test-123",
+        dataset_fingerprint="fingerprint-123",
         engine_version="VeriFHIR-0.9.3",
         policy_snapshot_version="HIPAA-2025.1",
+        jurisdiction_context={},
+        source_jurisdiction="US",
+        destination_jurisdiction="US",
+        decision={"outcome": "PASS"},
+        detections=[],
+        detection_methods_used=["rules"],
+        negative_assertions=[],
         purpose="RESEARCH",
         human_decision=human,
-        input_provenance=test_provenance,
-        replay_mode=False
+        input_provenance=test_provenance
     )
     
-    # Verify provenance is attached
     assert audit.input_provenance == test_provenance
-    assert audit.input_provenance["original_format"] == "HL7v2"
+    assert audit.input_provenance.original_format == "HL7v2"
