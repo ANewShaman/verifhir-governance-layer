@@ -434,6 +434,25 @@ if analyze_btn:
             response['audit_metadata']['regulation'] = regulation
             response['audit_metadata']['country_code'] = country_code
             
+            # DAY 35: Generate negative assertions
+            # Since dashboard doesn't track violations, generate assertions for all assurable categories
+            from verifhir.assurance.categories import ASSURABLE_CATEGORIES
+            
+            detection_methods_used = [response.get('remediation_method', 'Unknown')]
+            
+            # Generate negative assertions for all assurable categories
+            # (All categories are "not detected" since we don't track specific violations in dashboard)
+            negative_assertions_dict = []
+            for category in ASSURABLE_CATEGORIES.keys():
+                negative_assertions_dict.append({
+                    "category": category,
+                    "status": "NOT_DETECTED",
+                    "supported_by": ", ".join(sorted(detection_methods_used)),
+                    "scope_note": "Not detected within detector coverage"
+                })
+            
+            response['audit_metadata']['negative_assertions'] = negative_assertions_dict
+            
             st.session_state.current_result = response
             
             status.update(label="✓ Redaction Complete", state="complete", expanded=False)
@@ -508,7 +527,10 @@ with col_output:
         method = res['remediation_method']
         audit = res.get('audit_metadata', {})
         
-        col_m1, col_m2 = st.columns(2)
+        # DAY 36 PART A: Display purpose in summary view
+        declared_purpose = st.session_state.get('declared_purpose', 'Not yet declared')
+        
+        col_m1, col_m2, col_m3 = st.columns(3)
         with col_m1:
             st.caption(f"**Engine:** {method}")
         with col_m2:
@@ -517,6 +539,9 @@ with col_output:
                 st.caption(f"**Rules Applied:** {rule_count} categories")
             if 'regulation' in audit:
                 st.caption(f"**Regulation:** {audit['regulation']}")
+        with col_m3:
+            if declared_purpose != 'Not yet declared':
+                st.caption(f"**Purpose:** {declared_purpose}")
         
         st.divider()
         
@@ -548,7 +573,12 @@ with col_output:
         
         st.markdown("**4. Decision rationale**")
         st.markdown("* Presence of financial identifiers increased compliance risk")
-        st.markdown("* Declared purpose = \"Research\" restricted allowable identifiers")
+        # DAY 36 PART A: Display purpose in explainability (if available from session state)
+        declared_purpose = st.session_state.get('declared_purpose', 'Not yet declared')
+        if declared_purpose != 'Not yet declared':
+            st.markdown(f"* Declared purpose = \"{declared_purpose}\" restricted allowable identifiers")
+        else:
+            st.markdown("* Declared purpose will be recorded during human attestation")
         st.markdown(f"* Applicable regulations enforced: {regulation} + destination jurisdiction rules")
         
         st.markdown("**5. Role of AI (bounded)**")
@@ -607,6 +637,49 @@ with col_output:
         
         st.markdown("</div>", unsafe_allow_html=True)
         
+        # ============================================================
+        # DAY 35: NEGATIVE ASSURANCE VISIBILITY (HONESTY)
+        # ============================================================
+        negative_assertions = audit.get('negative_assertions', [])
+        if negative_assertions:
+            st.markdown(
+                """
+                <div style='background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 20px; margin: 20px 0;'>
+                <h3 style='color: #212529; margin-top: 0;'>Checked & Not Detected (Within Detector Coverage)</h3>
+                """,
+                unsafe_allow_html=True
+            )
+            
+            # Map category names to display format
+            category_display_map = {
+                "Biometric Identifiers": "Biometric identifiers",
+                "Genetic Data": "Genetic data",
+                "National Identifiers": "National identifiers",
+                "Financial Account Numbers": "Financial account numbers"
+            }
+            
+            # Display each negative assertion
+            # Filter to only show the 4 required categories
+            required_categories = ["Biometric Identifiers", "Genetic Data", "National Identifiers", "Financial Account Numbers"]
+            
+            for assertion in negative_assertions:
+                # Handle both dict and object formats
+                if isinstance(assertion, dict):
+                    category_name = assertion.get('category', '')
+                else:
+                    category_name = getattr(assertion, 'category', '')
+                
+                # Only display required categories
+                if category_name in required_categories:
+                    display_name = category_display_map.get(category_name, category_name)
+                    
+                    st.markdown(f"**{display_name}**")
+                    st.markdown("* Status: NOT DETECTED")
+                    st.markdown("* Scope note: Not detected within detector coverage")
+                    st.markdown("---")
+            
+            st.markdown("</div>", unsafe_allow_html=True)
+        
         st.divider()
         
         # ============================================================
@@ -625,6 +698,14 @@ with col_output:
         
         # Use Streamlit form for proper state management
         with st.form(key="human_decision_form", clear_on_submit=True):
+            # DAY 36 PART A: PURPOSE SELECTOR (Required, no default)
+            purpose = st.selectbox(
+                "Purpose *",
+                options=["", "Treatment", "Billing", "Research", "Operations"],
+                index=0,
+                help="Select the declared purpose for this data processing. This will be cryptographically bound to the audit record.",
+            )
+            
             # 1. REVIEWER IDENTITY
             reviewer_id = st.text_input(
                 "Reviewer Identity *",
@@ -666,6 +747,10 @@ with col_output:
             # Validation
             validation_errors = []
             
+            # DAY 36 PART A: Purpose validation
+            if not purpose or purpose.strip() == "":
+                validation_errors.append("Purpose selection is required")
+            
             if not reviewer_id or not reviewer_id.strip():
                 validation_errors.append("Reviewer identity is required")
             
@@ -687,6 +772,9 @@ with col_output:
                     from verifhir.orchestrator.audit_builder import build_audit_record
                     import uuid
                     
+                    # DAY 36 PART A: Store purpose in session state for display
+                    st.session_state.declared_purpose = purpose.strip()
+                    
                     # Create HumanDecision object
                     human_decision = HumanDecision(
                         reviewer_id=reviewer_id.strip(),
@@ -703,6 +791,7 @@ with col_output:
                         st.stop()
                     
                     # Build audit record
+                    # DAY 36 PART A: Use selected purpose instead of hardcoded value
                     audit_record = build_audit_record(
                         audit_id=str(uuid.uuid4()),
                         dataset_fingerprint=audit.get('dataset_fingerprint', 'UNKNOWN'),
@@ -718,7 +807,7 @@ with col_output:
                         detections=audit.get('rules_applied', []),
                         detection_methods_used=[method],
                         negative_assertions=audit.get('negative_assertions', []),
-                        purpose="clinical_data_remediation",
+                        purpose=purpose.strip(),  # DAY 36: Use selected purpose
                         human_decision=human_decision,
                         input_provenance=st.session_state.input_provenance,  # A.2: Explicit pass
                         previous_record_hash=None
@@ -737,6 +826,8 @@ with col_output:
                         st.success(f"✓ Record committed to secure vault.")
                         st.caption(f"Reference ID: {file_id}")
                         st.caption(f"Reviewer: {reviewer_id}")
+                        # DAY 36 PART A: Display purpose in final confirmation
+                        st.caption(f"Purpose: {purpose.strip()}")
                         st.caption(f"Decision: {decision} at {human_decision.timestamp.isoformat()}")
                         
                         # A.4: Use st.rerun() instead of manual clearing

@@ -60,7 +60,6 @@ def base_audit_params(valid_input_provenance):
         "detections": ["NAME", "SSN"],
         "detection_methods_used": ["AI", "REGEX"],
         "negative_assertions": [],
-        "purpose": "clinical_research",
         "input_provenance": valid_input_provenance,
     }
 
@@ -82,6 +81,7 @@ def test_builder_rejects_missing_reviewer_id(base_audit_params):
     with pytest.raises(ValueError, match="Reviewer identity is required"):
         build_audit_record(
             **base_audit_params,
+            purpose="clinical_research",
             human_decision=invalid_decision
         )
 
@@ -99,6 +99,7 @@ def test_builder_rejects_whitespace_only_reviewer_id(base_audit_params):
     with pytest.raises(ValueError, match="Reviewer identity is required"):
         build_audit_record(
             **base_audit_params,
+            purpose="clinical_research",
             human_decision=invalid_decision
         )
 
@@ -113,6 +114,7 @@ def test_builder_rejects_none_human_decision(base_audit_params):
     with pytest.raises(ValueError, match="Audit cannot be created without a human decision"):
         build_audit_record(
             **base_audit_params,
+            purpose="clinical_research",
             human_decision=None
         )
 
@@ -134,6 +136,7 @@ def test_builder_rejects_short_rationale(base_audit_params):
     with pytest.raises(ValueError, match="rationale must be at least 20 characters"):
         build_audit_record(
             **base_audit_params,
+            purpose="clinical_research",
             human_decision=invalid_decision
         )
 
@@ -151,6 +154,7 @@ def test_builder_rejects_whitespace_rationale(base_audit_params):
     with pytest.raises(ValueError, match="rationale must be at least 20 characters"):
         build_audit_record(
             **base_audit_params,
+            purpose="clinical_research",
             human_decision=invalid_decision
         )
 
@@ -168,6 +172,7 @@ def test_builder_accepts_exactly_20_char_rationale(base_audit_params):
     # Should not raise
     record = build_audit_record(
         **base_audit_params,
+        purpose="clinical_research",
         human_decision=valid_decision
     )
     
@@ -184,6 +189,7 @@ def test_builder_accepts_valid_human_decision(base_audit_params, valid_human_dec
     
     record = build_audit_record(
         **base_audit_params,
+        purpose="clinical_research",
         human_decision=valid_human_decision
     )
     
@@ -207,6 +213,7 @@ def test_builder_accepts_all_decision_types(base_audit_params):
         
         record = build_audit_record(
             **base_audit_params,
+            purpose="clinical_research",
             human_decision=valid_decision
         )
         
@@ -230,6 +237,7 @@ def test_builder_rejects_none_timestamp(base_audit_params):
     with pytest.raises(ValueError, match="Human decision timestamp is required"):
         build_audit_record(
             **base_audit_params,
+            purpose="clinical_research",
             human_decision=invalid_decision
         )
 
@@ -247,6 +255,7 @@ def test_builder_rejects_non_datetime_timestamp(base_audit_params):
     with pytest.raises(ValueError, match="Human decision timestamp is required"):
         build_audit_record(
             **base_audit_params,
+            purpose="clinical_research",
             human_decision=invalid_decision
         )
 
@@ -272,8 +281,8 @@ def test_audit_hash_changes_when_reviewer_id_changes(base_audit_params):
         timestamp=decision_1.timestamp  # Same timestamp
     )
     
-    record_1 = build_audit_record(**base_audit_params, human_decision=decision_1)
-    record_2 = build_audit_record(**base_audit_params, human_decision=decision_2)
+    record_1 = build_audit_record(**base_audit_params, purpose="clinical_research", human_decision=decision_1)
+    record_2 = build_audit_record(**base_audit_params, purpose="clinical_research", human_decision=decision_2)
     
     # Hashes MUST be different
     assert record_1.record_hash != record_2.record_hash, \
@@ -297,8 +306,8 @@ def test_audit_hash_changes_when_rationale_changes(base_audit_params):
         timestamp=decision_1.timestamp
     )
     
-    record_1 = build_audit_record(**base_audit_params, human_decision=decision_1)
-    record_2 = build_audit_record(**base_audit_params, human_decision=decision_2)
+    record_1 = build_audit_record(**base_audit_params, purpose="clinical_research", human_decision=decision_1)
+    record_2 = build_audit_record(**base_audit_params, purpose="clinical_research", human_decision=decision_2)
     
     # Hashes MUST be different
     assert record_1.record_hash != record_2.record_hash, \
@@ -322,8 +331,8 @@ def test_audit_hash_changes_when_decision_changes(base_audit_params):
         timestamp=decision_1.timestamp
     )
     
-    record_1 = build_audit_record(**base_audit_params, human_decision=decision_1)
-    record_2 = build_audit_record(**base_audit_params, human_decision=decision_2)
+    record_1 = build_audit_record(**base_audit_params, purpose="clinical_research", human_decision=decision_1)
+    record_2 = build_audit_record(**base_audit_params, purpose="clinical_research", human_decision=decision_2)
     
     # Hashes MUST be different
     assert record_1.record_hash != record_2.record_hash, \
@@ -353,12 +362,40 @@ def test_audit_hash_changes_when_timestamp_changes(base_audit_params):
         timestamp=timestamp_2  # DIFFERENT
     )
     
-    record_1 = build_audit_record(**base_audit_params, human_decision=decision_1)
-    record_2 = build_audit_record(**base_audit_params, human_decision=decision_2)
+    record_1 = build_audit_record(**base_audit_params, purpose="clinical_research", human_decision=decision_1)
+    record_2 = build_audit_record(**base_audit_params, purpose="clinical_research", human_decision=decision_2)
     
     # Hashes MUST be different
     assert record_1.record_hash != record_2.record_hash, \
         "Audit hash must change when timestamp changes"
+
+
+# ============================================================
+# DAY 36 TEST: PURPOSE HASH INTEGRITY
+# ============================================================
+
+def test_audit_hash_changes_when_purpose_changes(base_audit_params, valid_human_decision):
+    """Audit hash must change when purpose changes (Day 36 requirement)"""
+    
+    record_1 = build_audit_record(
+        **base_audit_params,
+        purpose="Treatment",
+        human_decision=valid_human_decision
+    )
+    
+    record_2 = build_audit_record(
+        **base_audit_params,
+        purpose="Research",  # DIFFERENT
+        human_decision=valid_human_decision
+    )
+    
+    # Hashes MUST be different
+    assert record_1.record_hash != record_2.record_hash, \
+        "Audit hash must change when purpose changes"
+    
+    # Verify purpose is stored correctly
+    assert record_1.purpose == "Treatment"
+    assert record_2.purpose == "Research"
 
 
 # ============================================================
@@ -370,6 +407,7 @@ def test_record_hash_matches_computed_hash(base_audit_params, valid_human_decisi
     
     record = build_audit_record(
         **base_audit_params,
+        purpose="clinical_research",
         human_decision=valid_human_decision
     )
     
@@ -390,7 +428,7 @@ def test_record_hash_matches_computed_hash(base_audit_params, valid_human_decisi
         "detections": base_audit_params["detections"],
         "detection_methods_used": base_audit_params["detection_methods_used"],
         "negative_assertions": base_audit_params["negative_assertions"],
-        "purpose": base_audit_params["purpose"],
+        "purpose": "clinical_research",
         "human_decision": {
             "reviewer_id": valid_human_decision.reviewer_id,
             "decision": valid_human_decision.decision,
@@ -431,6 +469,7 @@ def test_audit_record_is_immutable(base_audit_params, valid_human_decision):
     
     record = build_audit_record(
         **base_audit_params,
+        purpose="clinical_research",
         human_decision=valid_human_decision
     )
     
