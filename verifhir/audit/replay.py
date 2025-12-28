@@ -97,13 +97,22 @@ def replay_audit(audit_record: AuditRecord, provided_input: str) -> AuditRecord:
 
     # Rebuild the audit record in replay mode
     replayed = build_audit_record(
-        input_data=normalized_input,
+        audit_id=audit_record.audit_id,  # ADD THIS
+        dataset_fingerprint=audit_record.dataset_fingerprint,  # ADD THIS
         engine_version=audit_record.engine_version,
         policy_snapshot_version=audit_record.policy_snapshot_version,
+        jurisdiction_context=None,  # ADD THIS (or pull from record if available)
+        source_jurisdiction="US",  # ADD THIS
+         destination_jurisdiction="US",  # ADD THIS
+        decision=audit_record.decision,  # ADD THIS
+        detections=audit_record.detections,  # ADD THIS
+        detection_methods_used=audit_record.detection_methods_used,  # ADD THIS
+        negative_assertions=audit_record.negative_assertions,  # ADD THIS
         purpose=audit_record.purpose,
         human_decision=audit_record.human_decision,
         input_provenance=audit_record.input_provenance,
-        replay_mode=True,
+        # REMOVED: input_data (not in signature)
+        # REMOVED: replay_mode (not in signature)
     )
 
     # Verify deterministic behavior
