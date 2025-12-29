@@ -436,7 +436,8 @@ with tab1:
                             st.session_state.ocr_extracted_text = ocr_result["text"]
                             st.session_state.ocr_confidence = ocr_result["confidence"]
                             
-                            # DAY 37: Emit OCR confidence bucket
+                            # DAY 37: Emit OCR confidence bucket (TASK 2B: Distribution signal only)
+                            # Operational telemetry: validates "system receives readable artifacts and fails safely."
                             if ocr_result["confidence"] >= 0.9:
                                 emit_ocr_confidence_bucket("0.9+")
                             elif ocr_result["confidence"] >= 0.8:
@@ -654,7 +655,14 @@ with tab1:
                     decision_path=decision_path,
                     fallback_triggered=fallback_triggered,
                 )
-            
+                # TASK 1: Risk band distribution (operational validation only)
+                from verifhir.telemetry import emit_risk_band
+                if risk_score <= 3.0:
+                    emit_risk_band("LOW")
+                elif risk_score <= 8.0:
+                    emit_risk_band("MEDIUM")
+                else:
+                    emit_risk_band("HIGH")
             # Attach input provenance to response metadata
             if 'audit_metadata' not in response:
                 response['audit_metadata'] = {}

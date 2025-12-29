@@ -95,6 +95,9 @@ def emit_ocr_confidence_bucket(bucket: Literal["0.7-0.8", "0.8-0.9", "0.9+"]):
     
     Emit OCR confidence as categorical bucket only.
     Never logs raw confidence floats or extracted text.
+    
+    TASK 2B: Distribution signal only - countable categories, not numeric aggregates.
+    Operational telemetry: validates "system receives readable artifacts and fails safely."
     """
     assert bucket in ("0.7-0.8", "0.8-0.9", "0.9+"), f"bucket must be one of ('0.7-0.8', '0.8-0.9', '0.9+'), got {bucket}"
     
@@ -135,5 +138,35 @@ def emit_exception_telemetry(exception: Exception):
         name="verifhir.exception",
         attributes={
             "exception_type": scrub_exception_for_telemetry(exception)
+        }
+    )
+
+
+def emit_risk_band(band: Literal["LOW", "MEDIUM", "HIGH"]):
+    """
+    TASK 1: Risk Score Distribution (Aggregated, Not UI-Exposed)
+    
+    Emit coarse risk score band for operational validation.
+    
+    Bands:
+    - LOW: 0.0 - 3.0
+    - MEDIUM: 3.1 - 8.0
+    - HIGH: 8.1+
+    
+    Operational telemetry only. Used to detect silent degradation, not to validate decisions.
+    This emitter exists to answer: "What class of risk do submissions generally fall into?"
+    
+    Never shown in UI. Never affects decision logic.
+    """
+    assert band in ("LOW", "MEDIUM", "HIGH"), f"band must be one of ('LOW', 'MEDIUM', 'HIGH'), got {band}"
+    
+    span = get_current_span()
+    if not span:
+        return
+    
+    span.add_event(
+        name="verifhir.risk_band",
+        attributes={
+            "risk_band": band,
         }
     )
