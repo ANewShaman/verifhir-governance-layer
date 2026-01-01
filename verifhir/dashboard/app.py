@@ -322,6 +322,12 @@ DEMO_CASES = {
         }
     }
 }
+# --- INPUT MODE MAPPING (BUG FIX 2) ---
+INPUT_MODES = {
+    "Text / JSON": "TEXT",
+    "HL7 v2": "HL7",
+    "Image / Document (OCR)": "DOCUMENT_OCR",
+}
 
 # --- INITIALIZE SESSION STATE ---
 if "current_result" not in st.session_state:
@@ -419,29 +425,21 @@ with tab1:
             st.subheader("Source Input")
             
             # Three-way input selector
-            input_type_options = ["📄 Text / JSON", "📄 HL7 v2", "📷 Image / Document (OCR)"]
-            current_index = 0
-            if st.session_state.input_mode == "HL7":
-                current_index = 1
-            elif st.session_state.input_mode == "DOCUMENT_OCR":
-                current_index = 2
-            
+            current_mode_label = next(
+                (label for label, mode in INPUT_MODES.items()
+                if mode == st.session_state.input_mode),
+                "Text / JSON"
+            )
             input_type_selector = st.radio(
                 "Input Type",
-                options=input_type_options,
-                index=current_index,
+                options=list(INPUT_MODES.keys()),
+                index=list(INPUT_MODES.keys()).index(current_mode_label),
                 horizontal=True,
                 help="Select input type. OCR extracts text from images for compliance evaluation."
             )
-            
-            # Map radio selection to input_mode
-            if input_type_selector == "📷 Image / Document (OCR)":
-                st.session_state.input_mode = "DOCUMENT_OCR"
-            elif input_type_selector == "📄 HL7 v2":
-                st.session_state.input_mode = "HL7"
-            else:
-                st.session_state.input_mode = "TEXT"
-            
+            # Map selection to input_mode using the mapping (BUG FIX 2)
+            st.session_state.input_mode = INPUT_MODES[input_type_selector]
+
             # Input handling based on mode
             if st.session_state.input_mode == "DOCUMENT_OCR":
                 uploaded_file = st.file_uploader(
@@ -451,12 +449,18 @@ with tab1:
                 )
                 
                 if uploaded_file:
-                    st.session_state.uploaded_image = uploaded_file
+                    if uploaded_file.type == "application/pdf":
+                        st.session_state.uploaded_image = None
+                    else:
+                        st.session_state.uploaded_image = uploaded_file
+
                     try:
                         from verifhir.adapters.ocr_adapter import extract_text_from_image, OCRQualityError
                         from verifhir.telemetry import emit_ocr_confidence_bucket, scrub_exception_for_telemetry
                         
                         with st.status("Extracting text from image...", expanded=True) as ocr_status:
+                            if uploaded_file.type == "application/pdf":
+                                raise OCRQualityError("PDF input requires document OCR pipeline")
                             ocr_result = extract_text_from_image(uploaded_file)
                             st.session_state.ocr_extracted_text = ocr_result["text"]
                             st.session_state.ocr_confidence = ocr_result["confidence"]
@@ -484,14 +488,16 @@ with tab1:
                         emit_exception_telemetry(e)
                         st.error(f"OCR extraction failed: {error_name}")
                         st.stop()
-                
+                if not uploaded_file:
+                    st.session_state.uploaded_image = None
                 # Display extracted text or demo OCR text
                 if st.session_state.ocr_extracted_text:
                     # Only show image if we have an actual uploaded file
                     if st.session_state.uploaded_image is not None:
                         col_img, col_text = st.columns(2)
                         with col_img:
-                            st.image(st.session_state.uploaded_image, caption="Uploaded Image", use_container_width=True)
+                            st.image(st.session_state.uploaded_image, caption="Uploaded Image", width="stretch")
+
                         with col_text:
                             st.text_area(
                                 "Extracted text (used for compliance evaluation)",
@@ -542,7 +548,7 @@ with tab1:
                 )
                 st.session_state.last_input_text = input_text
             
-            analyze_btn = st.button("Analyze & Redact", type="primary", use_container_width=True)
+            analyze_btn = st.button("Analyze & Redact", type="primary", use_container_width="stretch")
     
     # --- ENGINE EXECUTION ---
     if analyze_btn and input_text:
@@ -880,7 +886,7 @@ with tab1:
                 )
                 
                 # Submit button
-                submitted = st.form_submit_button("Submit Decision", type="primary", use_container_width=True)
+                submitted = st.form_submit_button("Submit Decision", type="primary", use_container_width="stretch")
             
             # Process form submission
             if submitted:
