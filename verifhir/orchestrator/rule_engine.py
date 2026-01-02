@@ -25,17 +25,17 @@ except ImportError:
     GDPRFreeTextIdentifierRule = None
 
 try:
-    from verifhir.rules.uk_gdpr_free_text_rule import UKGDPRFreeTextRule
+    from verifhir.rules.uk_gdpr_free_text_identifier_rule import UKGDPRFreeTextRule
 except ImportError:
     UKGDPRFreeTextRule = None
 
 try:
-    from verifhir.rules.pipeda_free_text_rule import PIPEDAFreeTextRule
+    from verifhir.rules.pipeda_free_text_identifier_rule import PIPEDAFreeTextRule
 except ImportError:
     PIPEDAFreeTextRule = None
     
 try:
-    from verifhir.rules.lgpd_free_text_rule import LGPDFreeTextRule
+    from verifhir.rules.lgpd_free_text_identifier_rule import LGPDFreeTextRule
 except ImportError:
     LGPDFreeTextRule = None
 
