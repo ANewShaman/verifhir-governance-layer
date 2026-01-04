@@ -10,6 +10,7 @@ from verifhir.adapters.hl7_adapter import normalize_input
 from verifhir.models.input_provenance import InputProvenance
 from verifhir.telemetry import init_telemetry
 import hashlib
+import os
 
 init_telemetry()
 
@@ -19,6 +20,16 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Load production CSS if present
+try:
+    css_path = os.path.join(os.path.dirname(__file__), "ui.css")
+    if os.path.exists(css_path):
+        with open(css_path, "r", encoding="utf-8") as _cssf:
+            st.markdown(f"<style>{_cssf.read()}</style>", unsafe_allow_html=True)
+except Exception as _e:
+    # Fail gracefully in environments where file access may be restricted
+    st.warning(f"Unable to load UI CSS: {_e}")
 
 # --- BACKEND INITIALIZATION ---
 @st.cache_resource
