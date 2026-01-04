@@ -7,6 +7,113 @@ from dotenv import load_dotenv
 from openai import AzureOpenAI
 from verifhir.remediation.fallback import RegexFallbackEngine
 
+TEMPORAL_TIER_BLOCK = """
+TEMPORAL HANDLING POLICY (MANDATORY — NO EXCEPTIONS)
+
+CORE PRINCIPLE:
+Temporal information MUST be handled based on IDENTIFICATION RISK, not format, granularity, or mere presence.
+Dates are NOT inherently identifying. Context determines risk.
+
+ALL temporal references MUST be classified into EXACTLY ONE tier BEFORE any redaction, deletion, or transformation occurs.
+
+────────────────────────────────────────────────────────
+TIER 1 — DIRECT IDENTIFIERS (ALWAYS REDACT)
+
+Definition:
+Temporal elements that directly identify, uniquely track,
+or anchor an individual patient or encounter.
+
+IMPORTANT SCOPE RULE:
+Tier 1 applies ONLY to dates directly tied to the patient,
+not relatives or family history.
+
+Includes:
+• Date of birth (DOB)
+• Admission date
+• Discharge date
+• Exact death date of the patient
+• Any date explicitly labeling a patient visit, admission, discharge, or encounter
+
+
+────────────────────────────────────────────────────────
+TIER 2 — HITORICAL CONTEXT (YEAR-ONLY RETENTION)
+────────────────────────────────────────────────────────
+Definition:
+Past events that provide medical, familial, or background context and do NOT enable unique patient identification.
+
+EXCLUSION RULE:
+If a historical date refers to a unique patient encounter
+(e.g., hospitalization, admission, inpatient stay),
+it MUST be treated as Tier 1 unless the event is explicitly
+scoped to a family member or relative.
+
+Includes:
+• Diagnosis years
+• Family history events (e.g., parental death years)
+• Past surgeries or procedures when not tied to a specific encounter
+• Historical events unrelated to direct patient tracking
+
+Required Action:
+→ PRESERVE YEAR ONLY
+→ REMOVE month and day components if present
+
+Permitted Outputs:
+• “Diagnosed in 1998”
+• “Underwent surgery in 2007”
+
+────────────────────────────────────────────────────────
+TIER 3 — CLINICAL TIMELINE (PRESERVE OR CONVERT)
+────────────────────────────────────────────────────────
+Definition:
+Temporal information required to understand treatment sequence
+or monitoring cadence that does NOT uniquely identify the patient.
+
+Required Action:
+→ If conversion is required, express time RELATIVE TO THE ENCOUNTER DATE.
+
+MANDATORY FORM:
+• “X days prior to admission”
+• “X weeks prior to admission”
+• “X months prior to admission”
+• “X days after admission” (if applicable)
+
+DO NOT:
+• Reference the current date
+• Use vague phrases (“recently”, “some time ago”)
+• Guess durations
+
+If no encounter date is available:
+→ Use a coarse phrase (“prior to the encounter”) without numbers.
+Approved Relative Conversions:
+• “3 months ago”
+• “several years prior
+
+────────────────────────────────────────────────────────
+STRICT PROHIBITIONS (ABSOLUTE)
+────────────────────────────────────────────────────────
+The following outputs are FORBIDDEN under ALL circumstances:
+
+• “Started on [REDACTED DATE]”
+• “Diagnosed in [REDACTED DATE]”
+• Complete deletion of temporal information without replacement
+• Treating all dates as Tier 1 by default
+
+────────────────────────────────────────────────────────
+CLASSIFICATION FAILURE RULE (NON-NEGOTIABLE)
+────────────────────────────────────────────────────────
+If tier classification is UNCERTAIN, AMBIGUOUS, or CONTEXT-INCOMPLETE:
+
+• DO NOT delete the temporal reference
+• DO NOT fully redact the temporal reference
+• DEFAULT to Tier 3 behavior
+
+Required Fallback Action:
+→ CONVERT to a relative, non-identifying temporal expression
+
+This failure-handling rule applies uniformly across ALL regulations and enforcement layers.
+"""
+
+
 load_dotenv()
 
 class RedactionEngine:
@@ -326,10 +433,35 @@ class RedactionEngine:
         if regulation == "HIPAA":
             return f"""You are a specialized HIPAA Compliance Enforcement Engine.
 You are processing SYNTHETIC clinical text for security auditing purposes.
-YOUR MANDATE: AGGRESSIVELY REDACT ALL 18 HIPAA SAFE HARBOR IDENTIFIERS.
-Do not preserve analytical, clinical, or contextual usefulness.
+MANDATORY OPERATING PRINCIPLE:
+Identification risk is CONTEXTUAL, not absolute.
+
+TEMPORAL HANDLING RULES (STRICT):
+- Classify all temporal references before acting.
+- TIER 1 (DOB, admission, discharge): REDACT → [REDACTED DATE]
+- TIER 2 (historical context): KEEP YEAR ONLY
+- TIER 3 (clinical timeline): KEEP or CONVERT TO RELATIVE TIME
+
+FORBIDDEN OUTPUTS:
+- "Started on [REDACTED DATE]"
+- "Diagnosed in [REDACTED DATE]"
+
+REQUIRED OUTPUTS:
+- "Started X months prior to the admission date"
+- "Diagnosed in 1998"
 If a token could plausibly identify a person, device, location, or linkage, it must be destroyed.
 False positives are acceptable. False negatives are not.
+
+IMPORTANT CLARIFICATION:
+Temporal data MUST follow the Tier-Based Temporal Handling Policy below.
+Do NOT treat all dates as direct identifiers.
+Redaction of dates is permitted ONLY after tier classification.
+
+────────────────────────────────────────────────────────
+TEMPORAL HANDLING POLICY (MANDATORY)
+────────────────────────────────────────────────────────
+{TEMPORAL_TIER_BLOCK}
+
 ═══════════════════════════════════════════════════════════════
 TARGET LIST (SEARCH & DESTROY)
 ═══════════════════════════════════════════════════════════════
@@ -341,9 +473,61 @@ TARGET LIST (SEARCH & DESTROY)
 •	Biometric identifiers (fingerprint, retina, facial, voice) -> [REDACTED BIOMETRIC ID]
 •	Any alphanumeric string explicitly labeled as ID, Serial, Device, IP, or Identifier is automatically hostile and must be redacted
 [2] TEMPORAL DATA (DATES & AGE)
-•	ALL dates (admission, discharge, DOB, visit, procedure, timestamps) -> [REDACTED DATE]
-•	Exception: the YEAR may be preserved only if it appears alone and unlinked (e.g., 2024)
-•	Ages greater than 89, explicit or inferred -> [REDACTED AGE 90+]
+TIER 1 — DIRECT IDENTIFIERS (ALWAYS REDACT)
+
+Definition:
+Temporal elements that directly identify, uniquely track,
+or anchor an individual patient or encounter.
+
+IMPORTANT SCOPE RULE:
+Tier 1 applies ONLY to dates directly tied to the patient,
+not relatives or family history.
+
+Includes:
+• Date of birth (DOB)
+• Admission date
+• Discharge date
+• Exact death date of the patient
+• Any date explicitly labeling a patient visit, admission, discharge, or encounter
+
+
+TIER 2 — HISTORICAL CONTEXT (YEAR ONLY)
+EXCLUSION RULE:
+If a historical date refers to a unique patient encounter
+(e.g., hospitalization, admission, inpatient stay),
+it MUST be treated as Tier 1 unless the event is explicitly
+scoped to a family member or relative.
+
+• Diagnosis years
+• Family history events
+• Past surgeries
+
+Definition:
+Temporal information required to understand treatment sequence
+or monitoring cadence that does NOT uniquely identify the patient.
+
+Required Action:
+→ If conversion is required, express time RELATIVE TO THE ENCOUNTER DATE.
+
+MANDATORY FORM:
+• “X days prior to admission”
+• “X weeks prior to admission”
+• “X months prior to admission”
+• “X days after admission” (if applicable)
+
+DO NOT:
+• Reference the current date
+• Use vague phrases (“recently”, “some time ago”)
+• Guess durations
+
+If no encounter date is available:
+→ Use a coarse phrase (“prior to the encounter”) without numbers.
+
+
+FORBIDDEN: "Started on [REDACTED DATE]"
+REQUIRED:"Started X months prior to the admission date"
+
+
 [3] PERSON & RECORD IDENTIFIERS
 •	Personal names (patients, relatives, clinicians, staff) -> [REDACTED NAME]
 •	Medical Record Numbers (MRN) -> [REDACTED MRN]
@@ -391,6 +575,17 @@ Jurisdiction: {country} (European Union)
 If a token could directly or indirectly identify a natural person, it must be destroyed.
 This includes identifiers, location data, online identifiers, and factors specific to identity.
 False positives are acceptable. False negatives are not.
+
+IMPORTANT CLARIFICATION:
+Temporal data MUST follow the Tier-Based Temporal Handling Policy below.
+Do NOT treat all dates as direct identifiers.
+Redaction of dates is permitted ONLY after tier classification.
+
+────────────────────────────────────────────────────────
+TEMPORAL HANDLING POLICY (MANDATORY)
+────────────────────────────────────────────────────────
+{TEMPORAL_TIER_BLOCK}
+
 ═══════════════════════════════════════════════════════════════
 TARGET LIST (SEARCH & DESTROY)
 ═══════════════════════════════════════════════════════════════
@@ -413,10 +608,8 @@ TARGET LIST (SEARCH & DESTROY)
 •	City + postal code combinations -> [REDACTED LOCATION]
 •	Travel routes, mobility patterns -> [REDACTED LOCATION]
 [4] TEMPORAL & CONTEXTUAL DATA
-•	Birth dates (full dates) -> [REDACTED DATE]
-•	Transaction timestamps -> [REDACTED TIMESTAMP]
-•	Event dates linked to individuals -> [REDACTED DATE]
-•	Ages can be generalized to ranges; exact ages > 16 should be redacted if linkable
+Temporal handling is governed exclusively by the Tier-Based Temporal Handling Policy above.
+
 [5] SPECIAL CATEGORY DATA (Article 9)
 •	Health data (diagnoses, treatments, medical records) -> [REDACTED HEALTH DATA]
 •	Biometric data (fingerprints, facial recognition, DNA) -> [REDACTED BIOMETRIC ID]
@@ -463,6 +656,18 @@ Jurisdiction: United Kingdom (post-Brexit GDPR implementation)
 If a token could directly or indirectly identify a natural person, it must be destroyed.
 This includes identifiers, location data, online identifiers, and factors specific to identity.
 False positives are acceptable. False negatives are not.
+
+
+IMPORTANT CLARIFICATION:
+Temporal data MUST follow the Tier-Based Temporal Handling Policy below.
+Do NOT treat all dates as direct identifiers.
+Redaction of dates is permitted ONLY after tier classification.
+
+────────────────────────────────────────────────────────
+TEMPORAL HANDLING POLICY (MANDATORY)
+────────────────────────────────────────────────────────
+{TEMPORAL_TIER_BLOCK}
+
 ═══════════════════════════════════════════════════════════════
 TARGET LIST (SEARCH & DESTROY)
 ═══════════════════════════════════════════════════════════════
@@ -487,10 +692,8 @@ TARGET LIST (SEARCH & DESTROY)
 •	City + postcode combinations -> [REDACTED LOCATION]
 •	Travel routes, mobility patterns -> [REDACTED LOCATION]
 [4] TEMPORAL & CONTEXTUAL DATA
-•	Birth dates (full dates) -> [REDACTED DATE]
-•	Transaction timestamps -> [REDACTED TIMESTAMP]
-•	Event dates linked to individuals -> [REDACTED DATE]
-•	Ages can be generalized to ranges; exact ages should be redacted if linkable
+Temporal handling is governed exclusively by the Tier-Based Temporal Handling Policy above.
+
 [5] SPECIAL CATEGORY DATA (Article 9 / Schedule 1 Part 1)
 •	Health data (diagnoses, treatments, medical records) -> [REDACTED HEALTH DATA]
 •	Biometric data (fingerprints, facial recognition, DNA) -> [REDACTED BIOMETRIC ID]
@@ -537,6 +740,16 @@ Jurisdição: Brasil (Lei nº 13.709/2018)
 Se um token pode identificar direta ou indiretamente uma pessoa natural, ele deve ser destruído.
 Isso inclui identificadores, dados de localização, identificadores online e fatores específicos de identidade.
 Falsos positivos são aceitáveis. Falsos negativos não são.
+
+IMPORTANTE:
+Dados temporais DEVEM seguir a Política de Classificação Temporal por Camadas abaixo.
+Datas NÃO são identificadores por padrão.
+A redação de datas só é permitida após classificação por risco.
+
+────────────────────────────────────────────────────────
+POLÍTICA DE TRATAMENTO TEMPORAL (OBRIGATÓRIA)
+────────────────────────────────────────────────────────
+{TEMPORAL_TIER_BLOCK}
 ═══════════════════════════════════════════════════════════════
 LISTA DE ALVOS (BUSCAR E DESTRUIR)
 ═══════════════════════════════════════════════════════════════
@@ -561,10 +774,8 @@ LISTA DE ALVOS (BUSCAR E DESTRUIR)
 •	Combinações de cidade + CEP -> [REDACTED LOCATION]
 •	Rotas de viagem, padrões de mobilidade -> [REDACTED LOCATION]
 [4] DADOS TEMPORAIS E CONTEXTUAIS
-•	Datas de nascimento (datas completas) -> [REDACTED DATE]
-•	Timestamps de transações -> [REDACTED TIMESTAMP]
-•	Datas de eventos vinculadas a indivíduos -> [REDACTED DATE]
-•	Idades exatas devem ser redigidas se vinculáveis
+O tratamento temporal é regido exclusivamente pela Política de Classificação Temporal acima.
+
 [5] DADOS SENSÍVEIS (Art. 5º, II)
 •	Dados de saúde (diagnósticos, tratamentos, registros médicos) -> [REDACTED HEALTH DATA]
 •	Dados biométricos (impressões digitais, reconhecimento facial, DNA) -> [REDACTED BIOMETRIC ID]
@@ -612,6 +823,17 @@ Jurisdiction: India (Digital Personal Data Protection Act, 2023)
 If a token could directly or indirectly identify a Data Principal (individual), it must be destroyed.
 This includes identifiers, location data, online identifiers, and factors specific to identity.
 False positives are acceptable. False negatives are not.
+
+IMPORTANT CLARIFICATION:
+Temporal data MUST follow the Tier-Based Temporal Handling Policy below.
+Do NOT treat all dates as direct identifiers.
+Redaction of dates is permitted ONLY after tier classification.
+
+────────────────────────────────────────────────────────
+TEMPORAL HANDLING POLICY (MANDATORY)
+────────────────────────────────────────────────────────
+{TEMPORAL_TIER_BLOCK}
+
 ═══════════════════════════════════════════════════════════════
 TARGET LIST (SEARCH & DESTROY)
 ═══════════════════════════════════════════════════════════════
@@ -636,10 +858,8 @@ TARGET LIST (SEARCH & DESTROY)
 •	City + PIN code combinations -> [REDACTED LOCATION]
 •	Travel routes, mobility patterns -> [REDACTED LOCATION]
 [4] TEMPORAL & CONTEXTUAL DATA
-•	Birth dates (full dates) -> [REDACTED DATE]
-•	Transaction timestamps -> [REDACTED TIMESTAMP]
-•	Event dates linked to individuals -> [REDACTED DATE]
-•	Ages can be generalized; exact ages should be redacted if linkable
+Temporal handling is governed exclusively by the Tier-Based Temporal Handling Policy above.
+
 [5] SENSITIVE PERSONAL DATA (Section 2(g))
 •	Health data (diagnoses, treatments, medical records) -> [REDACTED HEALTH DATA]
 •	Biometric data (fingerprints, facial recognition, iris scans) -> [REDACTED BIOMETRIC ID]
@@ -685,6 +905,17 @@ YOUR MANDATE: AGGRESSIVELY REDACT ALL PERSONAL AND LINKABLE IDENTIFIERS.
 This is a technology-neutral baseline covering universal privacy principles.
 If a token could directly or indirectly identify an individual, organization, device, or location, it must be destroyed.
 False positives are acceptable. False negatives are not.
+
+IMPORTANT CLARIFICATION:
+Temporal data MUST follow the Tier-Based Temporal Handling Policy below.
+Do NOT treat all dates as direct identifiers.
+Redaction of dates is permitted ONLY after tier classification.
+
+────────────────────────────────────────────────────────
+TEMPORAL HANDLING POLICY (MANDATORY)
+────────────────────────────────────────────────────────
+{TEMPORAL_TIER_BLOCK}
+
 ═══════════════════════════════════════════════════════════════
 TARGET LIST (SEARCH & DESTROY)
 ═══════════════════════════════════════════════════════════════
@@ -702,11 +933,8 @@ TARGET LIST (SEARCH & DESTROY)
 •	URLs containing personal or tracking data -> [REDACTED URL]
 •	Usernames, handles, profile identifiers -> [REDACTED USERNAME]
 [3] LOCATION & TEMPORAL DATA
-•	GPS coordinates, geolocation data -> [REDACTED LOCATION]
-•	Precise addresses -> [REDACTED ADDRESS]
-•	City + postal code combinations -> [REDACTED LOCATION]
-•	Full dates (birth dates, event dates) -> [REDACTED DATE]
-•	Timestamps linked to individuals -> [REDACTED TIMESTAMP]
+Temporal handling is governed exclusively by the Tier-Based Temporal Handling Policy above.
+
 [4] BIOMETRIC & HEALTH DATA
 •	Biometric identifiers (fingerprints, facial data, retinal scans, voice prints) -> [REDACTED BIOMETRIC ID]
 •	Health information (diagnoses, treatments, medical records) -> [REDACTED HEALTH DATA]

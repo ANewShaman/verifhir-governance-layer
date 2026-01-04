@@ -10,7 +10,7 @@ PRODUCTION COMPLIANCE CODE - Correctness and auditability take priority.
 import re
 import json
 import logging
-from typing import Any, List, Tuple, Dict, Pattern, Set
+from typing import Any, List, Tuple, Dict, Pattern, Set, Optional
 from datetime import datetime
 
 logger = logging.getLogger("verifhir.remediation.fallback")
@@ -37,6 +37,21 @@ class RegexFallbackEngine:
         self.current_year = datetime.now().year
         self._compile_patterns()
         logger.info("RegexFallbackEngine initialized with deterministic rules")
+
+    def _classify_temporal_context(self, surrounding_text: str) -> str:
+        text = surrounding_text.lower()
+
+        if any(k in text for k in ["dob", "date of birth", "born", "admitted", "discharged", "patient died", "date of death"]): 
+            return "TIER_1"
+
+        elif any(k in text for k in ["diagnosed", "diagnosis", "surgery", "operation", "family history", "father", "mother"]):
+            return "TIER_2"
+
+        if any(k in text for k in ["started", "prescribed", "last checked", "follow up", "lab"]):
+            return "TIER_3"
+
+        return "UNCLASSIFIED"
+
     
     def _compile_patterns(self):
         """Initialize all regex patterns covering PHI/PII categories."""
@@ -233,10 +248,6 @@ class RegexFallbackEngine:
             "DATE_DEATH_ANCHORED", 
             "DATE_ADMISSION",
             "DATE_DISCHARGE",
-            "DATE_ISO",
-            "DATE_FULL",
-            "DATE_NUMERIC",
-            "AGE_OVER_89",
             
             # IDs and numbers (specific patterns first)
             "SSN",
@@ -275,6 +286,53 @@ class RegexFallbackEngine:
             "NAME_ANCHORED",
             "NAME_UNSTRUCTURED"
         ]
+
+    def _extract_encounter_anchor(self, text: str) -> Optional[datetime]:
+        """
+        Extract the encounter anchor date.
+        Priority: discharge > admission.
+        """
+        discharge_match = self._PATTERNS["DATE_DISCHARGE"].search(text)
+        if discharge_match:
+            return self._parse_date_safe(discharge_match.group(1))
+
+        admission_match = self._PATTERNS["DATE_ADMISSION"].search(text)
+        if admission_match:
+            return self._parse_date_safe(admission_match.group(1))
+
+        return None
+
+    def _parse_date_safe(self, date_text: str) -> Optional[datetime]:
+        """
+        Parse a date string safely across common formats.
+        """
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%B %d, %Y", "%b %d, %Y"):
+            try:
+                return datetime.strptime(date_text.strip(), fmt)
+            except Exception:
+                continue
+        return None
+
+    def _relative_to_anchor(self, target_date: datetime, anchor: datetime) -> str:
+        """
+        Convert a date into a relative phrase anchored to the encounter.
+        """
+        delta_days = (anchor - target_date).days
+
+        if delta_days < 0:
+            return "after admission"
+
+        if delta_days < 14:
+            return "shortly prior to admission"
+        elif delta_days < 60:
+            weeks = max(1, delta_days // 7)
+            return f"{weeks} weeks prior to admission"
+        elif delta_days < 365:
+            months = max(1, delta_days // 30)
+            return f"{months} months prior to admission"
+        else:
+            years = max(1, delta_days // 365)
+            return f"{years} years prior to admission"
 
     def redact(self, data: Any) -> Tuple[Any, List[str]]:
         """
@@ -445,19 +503,41 @@ class RegexFallbackEngine:
                             continue
                     except (ValueError, IndexError):
                         continue
+        
+
+                # --- CONTEXT-AWARE TEMPORAL HANDLING ---
+                if rule_name.startswith("DATE"):
+                    tier = self._classify_temporal_context(redacted_text)
+
+                    if tier == "TIER_1":
+                        replacement = "[REDACTED DATE]"
+                    elif tier == "TIER_2":
+                        year = re.search(r"\b\d{4}\b", target_text)
+                        replacement = year.group(0) if year else "[REDACTED DATE]"
+                    elif tier == "TIER_3":
+                        anchor = self._extract_encounter_anchor(redacted_text)
+                        parsed_date = self._parse_date_safe(target_text)
+
+                        if anchor and parsed_date:
+                            replacement = self._relative_to_anchor(parsed_date, anchor)
+                        else:
+                            replacement = "prior to the encounter"
+                    else:
+                        replacement = "previously"
+
+                    tag_type = "DATE"
+                else:
+                    tag_type = self._determine_tag_type(rule_name)
+                    replacement = f"[REDACTED {tag_type}]"
                 
-                # Determine tag type (human-readable category name)
-                tag_type = self._determine_tag_type(rule_name)
-                replacement = f"[REDACTED {tag_type}]"
-                
-                # Apply redaction
+                # Apply replacement
                 redacted_text = redacted_text[:start] + replacement + redacted_text[end:]
-                
+
                 # Track rule application
                 applied_rules.add(tag_type)
 
         return redacted_text
-    
+
     def _determine_tag_type(self, rule_name: str) -> str:
         """
         Map rule names to human-readable tag types.

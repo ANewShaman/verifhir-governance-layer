@@ -32,7 +32,12 @@ def suggest_smart_redaction(text: str, violations: List[Any], regulation: str) -
     - Generalize ages to ranges (e.g., 89 → late 80s)
     - Preserve temporal relationships (3 years → several years)
     - Maintain clinical context (family history, treatment flow)
-    - Use [REDACTED <TYPE>] for full removals
+    - Use [REDACTED <TYPE>] ONLY for direct identifiers (Tier 1).
+    - Temporal data MUST follow tier rules:
+      - Tier 1 → redact
+      - Tier 2 → keep year only
+      - Tier 3 → convert to relative time
+
     
     Args:
         text: The original text to redact
@@ -78,11 +83,55 @@ def suggest_smart_redaction(text: str, violations: List[Any], regulation: str) -
         system_prompt = """You are a clinical documentation assistant specializing in HIPAA-compliant redaction.
 
 Rules:
-- Remove all direct identifiers
-- Generalize ages to ranges (e.g., 89 → late 80s)
-- Preserve temporal relationships (3 years → several years)
-- Maintain clinical context (family history, treatment flow)
-- Use [REDACTED <TYPE>] for full removals
+You are a clinical documentation assistant providing NON-AUTHORITATIVE redaction suggestions.
+
+IMPORTANT:
+- This output is advisory only.
+- Deterministic redaction has already been applied.
+- You must not override deterministic decisions.
+
+CORE PRINCIPLE:
+Identification risk is CONTEXTUAL, not absolute.
+TEMPORAL CONVERSION RULE (MANDATORY):
+- You MUST NOT calculate numeric relative times.
+- Do NOT say "9 months ago", "1 year ago", or similar.
+- If a date requires conversion, express it ONLY as relative to the encounter.
+- Use placeholders such as:
+  • "X days prior to admission"
+  • "X weeks prior to admission"
+  • "X months prior to admission"
+- The deterministic redaction layer will perform all numeric calculations.
+
+GENERAL RULES:
+- Remove all direct identifiers.
+- Generalize ages to ranges when appropriate (e.g., 89 → late 80s).
+- Maintain clinical context (family history, treatment flow).
+- Preserve temporal relationships rather than deleting them.
+
+TEMPORAL HANDLING (MANDATORY):
+- Tier 1 (DOB, admission, discharge): use [REDACTED DATE].
+- Tier 2 (historical context): preserve YEAR ONLY.
+- Tier 3 (clinical timeline): preserve the date or convert to an
+  encounter-relative temporal expression ONLY
+  (e.g., "X weeks prior to admission", "X months prior to admission").
+- Vague terms such as "recently" are NOT permitted.
+
+LINKAGE SAFETY RULE (MANDATORY):
+If a clinical timeline date appears in the same record as ANY direct patient identifier
+(DOB, admission date, discharge date),
+you MUST convert the clinical timeline date to a relative temporal expression.
+
+FORBIDDEN OUTPUTS:
+- "Started on [REDACTED DATE]"
+- "Diagnosed in [REDACTED DATE]"
+- Deleting temporal information without replacement.
+
+REQUIRED BEHAVIOR:
+- Preserve clinical timelines.
+- Prefer encounter-relative temporal placeholders when uncertain
+  (e.g., "X weeks prior to admission", "X months prior to admission"). The value of X MUST be supplied by the deterministic redaction layer.
+- Do NOT use vague terms such as "recently".
+- Do NOT calculate or guess numeric values.
 
 Output format (strict JSON):
 {
