@@ -1013,6 +1013,7 @@ with tab2:
         col_left, col_right = st.columns(2, gap="large")
 
         with col_left:
+            # Extract detected categories for the display
             rules_applied = audit.get("rules_applied", [])
             categories_str = ", ".join(set(rules_applied)) if rules_applied else "Names, Dates, Identifiers"
             
@@ -1021,7 +1022,7 @@ with tab2:
                 <div class="evidence-header">Explainability</div>
                 <div class="evidence-divider"></div>
                 <div class="sub-widget">
-                    <strong style="color: #fef08a;">Detection Signals Used</strong>
+                    <strong>Detection Signals Used</strong>
                     <div style="margin-top:0.5rem;">
                         • Azure OpenAI (Advisory): Language-model suggestions<br/>
                         • Deterministic Rules: Regulatory compliance authority<br/>
@@ -1029,13 +1030,13 @@ with tab2:
                     </div>
                 </div>
                 <div class="sub-widget">
-                    <strong style="color: #fef08a;">Observed Findings</strong>
+                    <strong>Observed Findings</strong>
                     <div style="margin-top:0.5rem;">
                         • Key detected classes: {safe_text(categories_str)}
                     </div>
                 </div>
                 <div class="sub-widget">
-                    <strong style="color: #fef08a;">Decision Rationale</strong>
+                    <strong>Decision Rationale</strong>
                     <div style="margin-top:0.5rem;">
                         • Deterministic rules determine compliance; ML provides advisory suggestions.<br/>
                         • Final decision requires human attestation.
@@ -1046,6 +1047,7 @@ with tab2:
             st.markdown(explain_html, unsafe_allow_html=True)
 
         with col_right:
+            # Check for financial status specifically as per app logic
             negative_assertions = audit.get("negative_assertions", [])
             financial_status = "DETECTED" if any("financial" in str(n).lower() for n in negative_assertions) else "NOT DETECTED"
 
@@ -1054,21 +1056,21 @@ with tab2:
                 <div class="evidence-header">Checked & Not Detected</div>
                 <div class="evidence-divider"></div>
                 <div class="sub-widget">
-                    <strong style="color: #fef08a;">Biometric & Genetic Data</strong>
+                    <strong>Biometric & Genetic Data</strong>
                     <div style="margin-top:0.5rem;">
                         Status: NOT DETECTED<br/>
                         Scope: Not detected within detector coverage
                     </div>
                 </div>
                 <div class="sub-widget">
-                    <strong style="color: #fef08a;">Financial Identifiers</strong>
+                    <strong>Financial Identifiers</strong>
                     <div style="margin-top:0.5rem;">
                         Status: {safe_text(financial_status)}<br/>
                         Scope: Account numbers and routing information
                     </div>
                 </div>
                 <div class="sub-widget">
-                    <strong style="color: #fef08a;">National Identifiers</strong>
+                    <strong>National Identifiers</strong>
                     <div style="margin-top:0.5rem;">
                         Status: NOT DETECTED<br/>
                         Scope: SSN, Aadhaar, or NHS numbers depending on context
@@ -1087,15 +1089,13 @@ with tab2:
             <div class="evidence-header">Forensic Evidence</div>
             <div class="evidence-divider"></div>
             <div style="font-size:0.95rem; color:#cbd5e1; font-family: monospace;">
-                <span style="color: #fef08a; font-weight: bold;">Audit Metadata</span><br/>
+                <strong>Audit Metadata</strong><br/>
                 Governance Engine: {safe_text(engine.PROMPT_VERSION)}<br/>
                 Policy Snapshot: {safe_text(audit.get("policy_snapshot_version", "1.0"))}<br/><br/>
-                
-                <span style="color: #fef08a; font-weight: bold;">Integrity Hashes</span><br/>
+                <strong>Integrity Hashes</strong><br/>
                 Input Fingerprint: {safe_text(canonical_fingerprint)}<br/>
                 System Config Hash: {safe_text(system_hash)}<br/><br/>
-                
-                <span style="color: #fef08a; font-weight: bold;">Data Provenance</span><br/>
+                <strong>Data Provenance</strong><br/>
                 Original Format: {safe_text(st.session_state.input_provenance.original_format if st.session_state.input_provenance else "N/A")}<br/>
                 OCR Confidence: {safe_text(st.session_state.input_provenance.ocr_confidence if st.session_state.input_provenance else "N/A")}
             </div>
