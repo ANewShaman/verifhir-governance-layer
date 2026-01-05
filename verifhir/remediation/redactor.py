@@ -205,6 +205,15 @@ class RedactionEngine:
 
                 # Clean up the response
                 clean_suggestion = self._clean_ai_response(raw_suggestion)
+                # HIPAA: enforce deterministic temporal safety
+                if regulation == "HIPAA" and self._hipaa_temporal_violation(clean_suggestion):
+                    self.logger.warning("HIPAA temporal violation detected in AI output — falling back")
+                    return self._execute_fallback(
+                    text,
+                    "HIPAA temporal violation in AI output",
+                    regulation
+                )
+
 
                 elapsed = (datetime.datetime.now(datetime.timezone.utc) - start_time).total_seconds()
                 
@@ -339,6 +348,32 @@ class RedactionEngine:
                 }
 
         return {"valid": True, "reason": "All validations passed"}
+
+    def _hipaa_temporal_violation(self, text: str) -> bool:
+        """
+        HIPAA Safe Harbor:
+        Any full date (month/day) related to an individual is forbidden.
+        """
+        # ISO dates
+        if re.search(r"\b\d{4}-\d{2}-\d{2}\b", text):
+            return True
+
+        # Numeric dates
+        if re.search(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b", text):
+            return True
+
+        # Month name dates
+        if re.search(
+            r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|"
+            r"January|February|March|April|May|June|July|August|September|"
+            r"October|November|December)\s+\d{1,2},?\s+\d{4}\b",
+            text,
+            re.I
+        ):
+            return True
+
+        return False
+            
 
     def _clean_ai_response(self, raw_response: str) -> str:
         """Clean up AI response by removing conversational fluff and canary references"""

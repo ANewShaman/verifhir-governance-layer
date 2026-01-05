@@ -845,7 +845,7 @@ with tab1:
                                 ocr_engine_version="azure-doc-intel-v1.0",
                                 ocr_confidence=st.session_state.ocr_confidence,
                             )
-                            processed_text = input_text
+                            processed_text = st.session_state.ocr_extracted_text
                             emit_converter_status("success")
                             
                         elif st.session_state.input_mode == "HL7":
@@ -909,7 +909,7 @@ with tab1:
                                     ocr_engine_version=None,
                                     ocr_confidence=None,
                                 )
-                                processed_text = input_text
+                                processed_text = st.session_state.ocr_extracted_text or input_text
                                 emit_converter_status("success")
                         
                         st.write(f"Complete - Input normalized: {st.session_state.input_provenance.original_format}")

@@ -51,7 +51,46 @@ class RegexFallbackEngine:
             return "TIER_3"
 
         return "UNCLASSIFIED"
+    
+    def _classify_date_semantic_context(self, surrounding_text: str) -> str:
+        """
+        Classify WHAT the date refers to.
+        This is NOT the same as temporal tier.
+        """
+        text = surrounding_text.lower()
 
+        if any(k in text for k in [
+            "lab", "laboratory", "collection", "specimen",
+            "result", "measured", "test", "report"
+        ]):
+            return "LAB"
+        
+        if any(k in text for k in [
+            "started", "prescribed", "medication",
+            "dose", "therapy", "treatment"
+        ]):
+            return "MEDICATION"
+
+        if any(k in text for k in [
+            "father", "mother", "parent", "family history",
+            "sibling", "relative"
+        ]):
+            return "FAMILY_HISTORY"
+
+        return "GENERAL"
+
+    
+    def _has_tier1_temporal(self, text: str) -> bool:
+        """
+        Detect presence of Tier 1 temporal identifiers (DOB, admission, discharge, death).
+        """
+        tier1_patterns = [
+            self._PATTERNS["DATE_BIRTH_ANCHORED"],
+            self._PATTERNS["DATE_ADMISSION"],
+            self._PATTERNS["DATE_DISCHARGE"],
+            self._PATTERNS["DATE_DEATH_ANCHORED"],
+        ]
+        return any(p.search(text) for p in tier1_patterns)
     
     def _compile_patterns(self):
         """Initialize all regex patterns covering PHI/PII categories."""
@@ -248,6 +287,10 @@ class RegexFallbackEngine:
             "DATE_DEATH_ANCHORED", 
             "DATE_ADMISSION",
             "DATE_DISCHARGE",
+
+            "DATE_FULL",
+            "DATE_NUMERIC",
+            "DATE_ISO",
             
             # IDs and numbers (specific patterns first)
             "SSN",
@@ -290,15 +333,23 @@ class RegexFallbackEngine:
     def _extract_encounter_anchor(self, text: str) -> Optional[datetime]:
         """
         Extract the encounter anchor date.
-        Priority: discharge > admission.
+        Priority: discharge > admission > report date.
         """
+        # 1. Check for Discharge
         discharge_match = self._PATTERNS["DATE_DISCHARGE"].search(text)
         if discharge_match:
             return self._parse_date_safe(discharge_match.group(1))
 
+        # 2. Check for Admission
         admission_match = self._PATTERNS["DATE_ADMISSION"].search(text)
         if admission_match:
             return self._parse_date_safe(admission_match.group(1))
+
+        # 3. FIX: Check for "Date:" or "Report Date" to act as anchor for standalone labs
+        # This allows Tier 3 dates to be calculated relative to the report itself
+        report_date_match = re.search(r"(?i)(?:date|report date|collected)[\s:]+(\d{4}-\d{2}-\d{2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})", text)
+        if report_date_match:
+            return self._parse_date_safe(report_date_match.group(1))
 
         return None
 
@@ -455,7 +506,7 @@ class RegexFallbackEngine:
         text = str(text)
         
         redacted_text = text
-        
+
         # Process patterns in order (most specific → general)
         for rule_name in self._PATTERN_ORDER:
             if rule_name not in self._PATTERNS:
@@ -505,38 +556,49 @@ class RegexFallbackEngine:
                         continue
         
 
-                # --- CONTEXT-AWARE TEMPORAL HANDLING ---
+            # --- CONTEXT-AWARE TEMPORAL HANDLING ---
                 if rule_name.startswith("DATE"):
-                    tier = self._classify_temporal_context(redacted_text)
+                    tier = self._classify_temporal_context(text)
+                    semantic = self._classify_date_semantic_context(text)
+                    has_tier1 = self._has_tier1_temporal(text)
+                    anchor = self._extract_encounter_anchor(text)
+                    parsed_date = self._parse_date_safe(target_text)
 
+                    # 1. TIER 1 — ALWAYS REDACT (DOB, Admission)
                     if tier == "TIER_1":
                         replacement = "[REDACTED DATE]"
+                        
+                    # 2. TIER 2 — HISTORICAL (Keep Year Only)
                     elif tier == "TIER_2":
-                        year = re.search(r"\b\d{4}\b", target_text)
-                        replacement = year.group(0) if year else "[REDACTED DATE]"
+                        year_match = re.search(r"\b\d{4}\b", target_text)
+                        replacement = year_match.group(0) if year_match else "[REDACTED DATE]"
+
+                    # 3. TIER 3 — CLINICAL TIMELINE (Lab Results)
                     elif tier == "TIER_3":
-                        anchor = self._extract_encounter_anchor(redacted_text)
-                        parsed_date = self._parse_date_safe(target_text)
-
-                        if anchor and parsed_date:
-                            replacement = self._relative_to_anchor(parsed_date, anchor)
+                        # MANDATORY LINKAGE SAFETY: If Tier 1 (DOB) is present, 
+                        # we MUST convert to relative even if anchor is missing.
+                        if has_tier1:
+                            if anchor and parsed_date:
+                                replacement = self._relative_to_anchor(parsed_date, anchor)
+                            else:
+                                # Safe fallback per policy: use coarse phrase
+                                replacement = "prior to the encounter"
                         else:
-                            replacement = "prior to the encounter"
+                            # No Tier 1 identifiers? We can safely show the clinical date.
+                            # But usually, in HIPAA/GDPR, we prefer [REDACTED DATE] or relative.
+                            replacement = "[REDACTED DATE]"
                     else:
-                        replacement = "previously"
+                        replacement = "[REDACTED DATE]"
 
-                    tag_type = "DATE"
-                else:
-                    tag_type = self._determine_tag_type(rule_name)
-                    replacement = f"[REDACTED {tag_type}]"
-                
-                # Apply replacement
-                redacted_text = redacted_text[:start] + replacement + redacted_text[end:]
+                    # CRITICAL: Apply the replacement to the string
+                    redacted_text = (
+                        redacted_text[:start]
+                        + replacement
+                        + redacted_text[end:]
+                    )
+                    applied_rules.add("DATE")
+                    continue # Move to next match
 
-                # Track rule application
-                applied_rules.add(tag_type)
-
-        return redacted_text
 
     def _determine_tag_type(self, rule_name: str) -> str:
         """
