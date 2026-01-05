@@ -1,0 +1,44 @@
+{
+  "record_id": "e8976222296770f4",
+  "timestamp": "2026-01-05T18:28:22.528887",
+  "status": "COMMITTED",
+  "metadata": {
+    "timestamp": "2026-01-05T18:26:32.545256+00:00",
+    "elapsed_seconds": 2.326,
+    "model": "verifhir-gpt-4o",
+    "regulation": "HIPAA",
+    "validation": "passed",
+    "regulation_context": "HIPAA",
+    "country_code": "US",
+    "negative_assertions": [
+      {
+        "category": "Biometric Identifiers",
+        "status": "NOT_DETECTED",
+        "supported_by": "Azure OpenAI (verifhir-gpt-4o) - HIPAA",
+        "scope_note": "Not detected within detector coverage"
+      },
+      {
+        "category": "Genetic Data",
+        "status": "NOT_DETECTED",
+        "supported_by": "Azure OpenAI (verifhir-gpt-4o) - HIPAA",
+        "scope_note": "Not detected within detector coverage"
+      },
+      {
+        "category": "National Identifiers",
+        "status": "NOT_DETECTED",
+        "supported_by": "Azure OpenAI (verifhir-gpt-4o) - HIPAA",
+        "scope_note": "Not detected within detector coverage"
+      },
+      {
+        "category": "Financial Account Numbers",
+        "status": "NOT_DETECTED",
+        "supported_by": "Azure OpenAI (verifhir-gpt-4o) - HIPAA",
+        "scope_note": "Not detected within detector coverage"
+      }
+    ]
+  },
+  "data": {
+    "original_text_length": 95,
+    "redacted_text": "Patient's father died at age 89. Started metformin 1 month prior to the admission date. Patient lives at [REDACTED ADDRESS].\n\n] ] ]"
+  }
+}
