@@ -1,3 +1,4 @@
+/* verifhir/dashboard/ui.css */
 /* d:\verifhir\verifhir-governance-layer\verifhir\dashboard\ui.css */
 
 /* ============================================
@@ -250,3 +251,47 @@ hr {
 /* --- REMOVE STREAMLIT BRANDING --- */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
+
+/* ===============================
+   TARGETED EVIDENCE WIDGET STYLES
+   =============================== */
+
+.evidence-widget {
+    background: rgba(30, 41, 59, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+.evidence-header {
+    font-size: 1.25rem;
+    font-weight: 500;
+    color: #cbd5e1;
+}
+
+.evidence-divider {
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    margin: 0.75rem 0 1rem 0;
+}
+
+.sub-widget {
+    background: rgba(15, 23, 42, 0.3);
+    border-left: 2px solid rgba(96, 165, 250, 0.3);
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.75rem;
+    border-radius: 4px;
+}
+
+.redaction-review-container {
+    background: rgba(15, 23, 42, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 2rem;
+    margin: 1.5rem 0;
+    white-space: pre-wrap;
+    font-family: 'SF Mono', 'Consolas', monospace;
+    color: #cbd5e1;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}

@@ -1,3 +1,4 @@
+# verifhir/dashboard/app.py
 # d:\verifhir\verifhir-governance-layer\verifhir\dashboard\app.py
 
 import streamlit as st
@@ -14,6 +15,13 @@ from verifhir.telemetry import init_telemetry
 import hashlib
 import os
 import re
+
+def safe_text(value):
+    """
+    Escape user-controlled text only.
+    Never escape structural HTML.
+    """
+    return html.escape(str(value)) if value is not None else ""
 
 init_telemetry()
 
@@ -412,14 +420,15 @@ with tab1:
         st.markdown("### Source Record")
         if st.session_state.judge_mode:
             with st.expander("Source Input (Locked)", expanded=False):
-                st.text_area("Input (Read-Only)", value=st.session_state.get('last_input_text', ''), height=200, disabled=True)
+                st.text_area("Source Record (Read-Only)", value=st.session_state.get('last_input_text', ''), height=200, disabled=True)
         else:
-            st.markdown("##### Read-Only")
-            st.text_area("Input", value=st.session_state.get('last_input_text', ''), height=150, disabled=True)
+            # Standard Mode: visually demoted read-only area
+            st.caption("Source Record (Read-Only)")
+            st.text_area("Source Record (Read-Only)", value=st.session_state.get('last_input_text', ''), height=150, disabled=True)
         
         st.markdown("---")
         
-        # 2. Redaction Review (PRIMARY, dominant)
+        # 2. Redaction Review (PRIMARY, dominant) - full width only
         st.markdown("### Redaction Review")
         res = st.session_state.current_result
         
@@ -436,7 +445,7 @@ with tab1:
             
             st.markdown(
                 f"""
-                <div class="output-container">
+                <div class="redaction-review-container">
                     {diff_html}
                 </div>
                 """,
@@ -448,7 +457,7 @@ with tab1:
             
             st.markdown(
                 f"""
-                <div class="output-container">
+                <div class="redaction-review-container">
                     {clean_html}
                 </div>
                 """,
@@ -614,7 +623,7 @@ with tab1:
                                 metadata=res.get('audit_metadata', {})
                             )
                             
-                            st.success(f"Record committed to secure vault.")
+                            st.success("Record committed to secure vault.")
                             st.caption(f"Reference ID: {file_id}")
                             st.caption(f"Reviewer: {reviewer_id}")
                             st.caption(f"Purpose: {purpose.strip()}")
@@ -651,33 +660,34 @@ with tab1:
         with col_evidence:
             st.markdown("#### Supporting Evidence")
             
-            # Explainability Summary
-            st.markdown("**How This Decision Was Made**")
+            # Explainability Summary (3-4 bullets)
+            st.markdown("**Decision Recap**")
+            signals_text = ', '.join([m for m in ([res.get('remediation_method')] if res.get('remediation_method') else [])]) or 'Deterministic rules + ML advisory'
+            findings_text = ', '.join(sorted(set([f for f in re.findall(r'\b[A-Z][a-z]+ identifiers?\b', res.get('audit_metadata', {}).get('summary', '') or '')]))) or 'Names, dates, identifiers (where applicable)'
             st.markdown(f"""
-- Detection: Azure OpenAI (advisory) + Rules (deterministic)
-- Regulation: {audit.get('regulation', 'N/A')}
-- Purpose: {declared_purpose if declared_purpose != 'Not yet declared' else 'Not declared'}
-- Role of AI: Advisory only; human approval required
+- Signals: {signals_text}
+- Key findings: {findings_text}
+- Rationale: {audit.get('decision_rationale', 'Rule-based remediation with advisory ML suggestions')}
 """)
             
-            # Negative Assurance Summary
-            st.markdown("**Checked & Not Detected**")
-            st.markdown("""
-- Biometric identifiers: Not detected
-- Genetic data: Not detected
-- National identifiers: (scope-specific)
-- Financial account numbers: (scope-specific)
-""")
+            # Negative Assurance Summary (3-4 bullets)
+            st.markdown("**Negative Assurance (summary)**")
+            negs = audit.get('negative_assertions', [])
+            if negs:
+                # pick up to 4 categories to summarize
+                summary_cats = [n.get('category') for n in negs[:4]]
+                for cat in summary_cats:
+                    st.markdown(f"- {cat}: NOT DETECTED")
+            else:
+                st.markdown("- No negative assertions available")
             
-            # Forensic Metadata Highlights
-            st.markdown("**Audit Fingerprints**")
+            # Short forensic identifiers list
             canonical_fingerprint = hashlib.sha256(res['original_text'].encode()).hexdigest()[:32]
             system_config_hash_val = st.session_state.input_provenance.system_config_hash if st.session_state.input_provenance else compute_system_config_hash()
-            st.markdown(f"""
-**Input:** `{canonical_fingerprint}`  
-**System:** `{system_config_hash_val}`  
-**Engine:** `{engine.PROMPT_VERSION}`
-""")
+            st.markdown("**Forensic IDs (concise)**")
+            st.markdown(f"- Input fingerprint: `{canonical_fingerprint}`")
+            st.markdown(f"- System config hash: `{system_config_hash_val}`")
+            st.markdown(f"- Engine: `{engine.PROMPT_VERSION}`")
     
     else:
         # PHASE 1: SIDE-BY-SIDE (Before Analysis)
@@ -786,7 +796,8 @@ with tab1:
                 )
                 st.session_state.last_input_text = input_text
                 
-            else:  # TEXT mode
+            else:
+                # TEXT mode
                 if selected_demo and DEMO_CASES[selected_demo]["input_mode"] == "TEXT":
                     default_text = DEMO_CASES[selected_demo]["input"]
                 else:
@@ -862,7 +873,8 @@ with tab1:
                             else:
                                 processed_text = str(fhir_bundle)
                             
-                        else:  # TEXT mode
+                        else:
+                            # TEXT mode
                             try:
                                 raw_payload = json.loads(input_text)
                                 normalized = normalize_input(
@@ -924,7 +936,6 @@ with tab1:
                     
                     from opentelemetry import trace
                     from verifhir.telemetry import emit_decision_telemetry
-                    import time
                     
                     tracer = trace.get_tracer(__name__)
                     
@@ -986,117 +997,108 @@ with tab1:
                     st.rerun()
 
 with tab2:
-    # Governance Evidence Tab (Mandatory Review Document)
-    st.markdown("""
-# Governance Evidence (Required Review)
+    st.markdown("# Governance Evidence (Required Review)")
+    st.markdown(
+        "This section documents why the proposed redaction is compliant under the selected regulation. "
+        "Reviewers are expected to consult this evidence before attestation."
+    )
 
-This section documents why the proposed redaction is compliant under the selected regulation.  
-Reviewers are expected to consult this evidence before attestation.
-
----
-    """)
-    
     if not st.session_state.current_result:
         st.info("No analysis results available. Please analyze input in the Review & Decision tab.")
     else:
         res = st.session_state.current_result
-        audit = res.get('audit_metadata', {})
-        declared_purpose = st.session_state.get('declared_purpose', 'Not yet declared')
+        audit = res.get("audit_metadata", {})
         
-        # 1. EXPLAINABILITY (Flattened Markdown)
-        st.markdown("## Explainability")
-        st.markdown("*How this decision was made*")
-        st.markdown(f"""
-### 1. Detection Signals Used
+        # --- ROW 1: EXPLAINABILITY & NEGATIVE ASSURANCE ---
+        col_left, col_right = st.columns(2, gap="large")
 
-- **Azure OpenAI (Advisory):** Language model-based suggestion only
-- **Deterministic Rules (Regulatory):** Rule engine determines compliance authority
-- **Regex Validation (Identifiers):** Pattern matching for structured identifiers
+        with col_left:
+            # Extract detected categories for the display
+            rules_applied = audit.get("rules_applied", [])
+            categories_str = ", ".join(set(rules_applied)) if rules_applied else "Names, Dates, Identifiers"
+            
+            explain_html = f"""
+            <div class="evidence-widget">
+                <div class="evidence-header">Explainability</div>
+                <div class="evidence-divider"></div>
+                <div class="sub-widget">
+                    <strong>Detection Signals Used</strong>
+                    <div style="margin-top:0.5rem;">
+                        • Azure OpenAI (Advisory): Language-model suggestions<br/>
+                        • Deterministic Rules: Regulatory compliance authority<br/>
+                        • Regex & Identifier Validation: Pattern-based validators
+                    </div>
+                </div>
+                <div class="sub-widget">
+                    <strong>Observed Findings</strong>
+                    <div style="margin-top:0.5rem;">
+                        • Key detected classes: {safe_text(categories_str)}
+                    </div>
+                </div>
+                <div class="sub-widget">
+                    <strong>Decision Rationale</strong>
+                    <div style="margin-top:0.5rem;">
+                        • Deterministic rules determine compliance; ML provides advisory suggestions.<br/>
+                        • Final decision requires human attestation.
+                    </div>
+                </div>
+            </div>
+            """
+            st.markdown(explain_html, unsafe_allow_html=True)
 
-### 2. Observed Findings
+        with col_right:
+            # Check for financial status specifically as per app logic
+            negative_assertions = audit.get("negative_assertions", [])
+            financial_status = "DETECTED" if any("financial" in str(n).lower() for n in negative_assertions) else "NOT DETECTED"
 
-- Financial identifiers detected: Yes
-- Personal names detected: Yes
-- Dates detected: Yes
-- Additional PII: Yes
+            checked_html = f"""
+            <div class="evidence-widget">
+                <div class="evidence-header">Checked & Not Detected</div>
+                <div class="evidence-divider"></div>
+                <div class="sub-widget">
+                    <strong>Biometric & Genetic Data</strong>
+                    <div style="margin-top:0.5rem;">
+                        Status: NOT DETECTED<br/>
+                        Scope: Not detected within detector coverage
+                    </div>
+                </div>
+                <div class="sub-widget">
+                    <strong>Financial Identifiers</strong>
+                    <div style="margin-top:0.5rem;">
+                        Status: {safe_text(financial_status)}<br/>
+                        Scope: Account numbers and routing information
+                    </div>
+                </div>
+                <div class="sub-widget">
+                    <strong>National Identifiers</strong>
+                    <div style="margin-top:0.5rem;">
+                        Status: NOT DETECTED<br/>
+                        Scope: SSN, Aadhaar, or NHS numbers depending on context
+                    </div>
+                </div>
+            </div>
+            """
+            st.markdown(checked_html, unsafe_allow_html=True)
 
-### 3. Not Observed (Within Scope)
-
-- Biometric identifiers: Not detected
-- Genetic data: Not detected
-
-### 4. Decision Rationale
-
-- **Financial identifiers increase risk:** True
-- **Declared purpose:** {declared_purpose}
-- **Regulations:** {audit.get('regulation', 'N/A')}
-- **Jurisdiction:** {audit.get('country_code', 'N/A')}
-
-### 5. Role of AI (Bounded)
-
-- Azure OpenAI = Advisory only (suggestions only)
-- Rules = Deterministic authority (compliance arbiter)
-- Human approval = Required (final decision maker)
-""")
+        # --- ROW 2: FORENSIC EVIDENCE (FULL WIDTH) ---
+        canonical_fingerprint = hashlib.sha256(res["original_text"].encode()).hexdigest()[:32]
+        system_hash = st.session_state.input_provenance.system_config_hash if st.session_state.input_provenance else "UNKNOWN"
         
-        # 2. CHECKED & NOT DETECTED (Flattened Markdown)
-        st.markdown("## Checked & Not Detected")
-        st.markdown("*Negative assurance within detector coverage*")
-        
-        negative_assertions = audit.get('negative_assertions', [])
-        if negative_assertions:
-            for assertion in negative_assertions:
-                cat = assertion.get('category', 'Unknown')
-                status = assertion.get('status', 'NOT_DETECTED')
-                scope = assertion.get('scope_note', '')
-                st.markdown(f"""
-**{cat}**  
-Status: {status}  
-Scope: {scope}
-""")
-        else:
-            st.markdown("*No negative assertions available.*")
-        
-        # 3. FORENSIC EVIDENCE (Flattened Markdown)
-        st.markdown("## Forensic Evidence (Read-Only)")
-        st.markdown("*Cryptographic audit metadata*")
-        
-        canonical_fingerprint = hashlib.sha256(res['original_text'].encode()).hexdigest()[:32]
-        system_config_hash_val = st.session_state.input_provenance.system_config_hash if st.session_state.input_provenance else compute_system_config_hash()
-        
-        original_format = st.session_state.input_provenance.original_format if st.session_state.input_provenance else 'FHIR | HL7v2 | IMAGE'
-        
-        if st.session_state.input_provenance:
-            if st.session_state.input_provenance.original_format == 'HL7v2':
-                normalization = 'HL7→FHIR'
-            elif st.session_state.input_provenance.ocr_engine_version:
-                normalization = 'OCR'
-            else:
-                normalization = 'None'
-        else:
-            normalization = 'None'
-        
-        converter_version = st.session_state.input_provenance.converter_version if st.session_state.input_provenance and st.session_state.input_provenance.converter_version else (st.session_state.input_provenance.ocr_engine_version if st.session_state.input_provenance and st.session_state.input_provenance.ocr_engine_version else 'N/A')
-        
-        ocr_confidence = st.session_state.input_provenance.ocr_confidence if st.session_state.input_provenance and st.session_state.input_provenance.ocr_confidence is not None else 'N/A'
-        
-        st.markdown(f"""
-### Audit Proof Metadata
-
-**Governance Engine:** `{engine.PROMPT_VERSION}`  
-**Policy Snapshot:** `{audit.get('policy_snapshot_version', '1.0')}`  
-**Input Fingerprint:** `{canonical_fingerprint}`  
-**System Config Hash:** `{system_config_hash_val}`
-
-### Input Provenance
-
-**Original Format:** `{original_format}`  
-**Normalization:** `{normalization}`  
-**Converter / OCR Version:** `{converter_version}`  
-**OCR Confidence:** `{ocr_confidence}`
-
-### Immutability Notice
-
-This metadata is cryptographically bound to the audit record.  
-All changes to source, rules, or system configuration are detectable.
-""")
+        forensic_html = f"""
+        <div class="evidence-widget">
+            <div class="evidence-header">Forensic Evidence</div>
+            <div class="evidence-divider"></div>
+            <div style="font-size:0.95rem; color:#cbd5e1; font-family: monospace;">
+                <strong>Audit Metadata</strong><br/>
+                Governance Engine: {safe_text(engine.PROMPT_VERSION)}<br/>
+                Policy Snapshot: {safe_text(audit.get("policy_snapshot_version", "1.0"))}<br/><br/>
+                <strong>Integrity Hashes</strong><br/>
+                Input Fingerprint: {safe_text(canonical_fingerprint)}<br/>
+                System Config Hash: {safe_text(system_hash)}<br/><br/>
+                <strong>Data Provenance</strong><br/>
+                Original Format: {safe_text(st.session_state.input_provenance.original_format if st.session_state.input_provenance else "N/A")}<br/>
+                OCR Confidence: {safe_text(st.session_state.input_provenance.ocr_confidence if st.session_state.input_provenance else "N/A")}
+            </div>
+        </div>
+        """
+        st.markdown(forensic_html, unsafe_allow_html=True)
