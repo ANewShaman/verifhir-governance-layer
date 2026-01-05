@@ -78,6 +78,27 @@ class RegexFallbackEngine:
             return "FAMILY_HISTORY"
 
         return "GENERAL"
+    
+    def _hipaa_allow_lab_date(self, surrounding_text: str) -> bool:
+        """
+        HIPAA-specific exception:
+        Allow lab/report dates to remain (year-only or full)
+        when they are not encounter anchors.
+        """
+        semantic = self._classify_date_semantic_context(surrounding_text)
+
+        if semantic != "LAB":
+            return False
+
+        # Explicit encounter indicators always override
+        if any(k in surrounding_text.lower() for k in [
+            "admitted", "admission",
+            "discharged", "discharge",
+            "visit", "encounter"
+        ]):
+            return False
+
+        return True
 
     
     def _has_tier1_temporal(self, text: str) -> bool:
@@ -351,6 +372,13 @@ class RegexFallbackEngine:
         if report_date_match:
             return self._parse_date_safe(report_date_match.group(1))
 
+        lab_anchor_match = re.search(
+        r"(?i)(?:result date|collection date|report date|collected)[\s:]+(\d{4}-\d{2}-\d{2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})", 
+        text
+        )
+        if lab_anchor_match:
+            return self._parse_date_safe(lab_anchor_match.group(1))
+
         return None
 
     def _parse_date_safe(self, date_text: str) -> Optional[datetime]:
@@ -489,23 +517,16 @@ class RegexFallbackEngine:
             return value
 
     def _redact_string(self, text: str, applied_rules: Set[str]) -> str:
-        """
-        Apply all regex patterns to a string value.
-        
-        Args:
-            text: Input string to redact
-            applied_rules: Set to accumulate applied rule names
-            
-        Returns:
-            Redacted string with PHI/PII replaced by [REDACTED <TYPE>] tags
-        """
         if not text or not isinstance(text, str):
             return text if text is not None else ""
-        
-        # Convert to string if not already (defensive)
-        text = str(text)
-        
+    
         redacted_text = text
+
+    # 1. NEW: DOCUMENT-WIDE CONTEXT (Do this BEFORE the loops)
+    # Check if a name exists ANYWHERE to trigger the Linkage Safety Rule
+        has_name = any(self._PATTERNS[p].search(text) for p in ["NAME_ANCHORED", "NAME_UNSTRUCTURED"])
+    # Identify the encounter anchor (Admission or Report Date)
+        anchor = self._extract_encounter_anchor(text)
 
         # Process patterns in order (most specific → general)
         for rule_name in self._PATTERN_ORDER:
@@ -517,87 +538,62 @@ class RegexFallbackEngine:
             
             # Process matches in reverse to maintain index validity
             for match in reversed(matches):
-                # Determine which group to use
+                # --- 1. EXTRACT DATA (Lines 300-313 in your original) ---
                 if "ANCHORED" in rule_name and match.lastindex and match.lastindex >= 1:
-                    # Anchored patterns capture the data after the label
-                    target_text = match.group(1).strip() if match.lastindex >= 1 else match.group(0).strip()
-                    start = match.start(1) if match.lastindex >= 1 else match.start(0)
-                    end = match.end(1) if match.lastindex >= 1 else match.end(0)
-                    # Check the full match region for existing redactions
-                    full_match_text = match.group(0)
+                    target_text = match.group(1).strip()
+                    start = match.start(1)
+                    end = match.end(1)
                 else:
-                    # Unstructured patterns capture the entire match
                     target_text = match.group(0).strip()
                     start = match.start(0)
                     end = match.end(0)
-                    full_match_text = match.group(0)
 
-                # Skip if empty
-                if not target_text:
+                if not target_text or "[REDACTED" in target_text:
                     continue
-                
-                # Skip if already redacted (check both target and full match region)
-                if "[REDACTED" in target_text or "[REDACTED" in full_match_text:
-                    continue
-                
-                # Apply validation rules (to reduce false positives)
+
+                # --- 2. TEMPORAL LOGIC (The MVP Fix) ---
+                if rule_name.startswith("DATE"):
+                    tier = self._classify_temporal_context(text)
+                    parsed_date = self._parse_date_safe(target_text)
+                    
+                    # LINKAGE SAFETY: Check if a name exists ANYWHERE in the doc
+                    # This is why your image redaction was failing.
+                    has_name = any(self._PATTERNS[p].search(text) for p in ["NAME_ANCHORED", "NAME_UNSTRUCTURED"])
+                    anchor = self._extract_encounter_anchor(text)
+
+                    # HIPAA ENFORCEMENT: If name exists OR it's Tier 1 (DOB/Admit)
+                    if has_name or tier == "TIER_1":
+                        if anchor and parsed_date:
+                            replacement = self._relative_to_anchor(parsed_date, anchor)
+                        else:
+                            # Safe Harbor: Keep Year Only
+                            year_match = re.search(r"\b\d{4}\b", target_text)
+                            replacement = year_match.group(0) if year_match else "[REDACTED DATE]"
+                    
+                    elif tier == "TIER_2": # Historical (Keep Year)
+                        year_match = re.search(r"\b\d{4}\b", target_text)
+                        replacement = year_match.group(0) if year_match else "[REDACTED DATE]"
+                    
+                    else: # Tier 3 or Unclassified
+                        replacement = "[REDACTED DATE]"
+
+                    redacted_text = redacted_text[:start] + replacement + redacted_text[end:]
+                    applied_rules.add("DATE")
+                    continue 
+
+                # --- 3. VALIDATION FOR OTHER RULES ---
                 if "NAME" in rule_name and not self._is_valid_name(target_text):
                     continue
                 
                 if "ADDRESS" in rule_name and not self._is_valid_address(target_text):
                     continue
                 
-                if "AGE_OVER_89" in rule_name:
-                    try:
-                        age = int(match.group(1))
-                        if age < 90:
-                            continue
-                    except (ValueError, IndexError):
-                        continue
-        
-
-            # --- CONTEXT-AWARE TEMPORAL HANDLING ---
-                if rule_name.startswith("DATE"):
-                    tier = self._classify_temporal_context(text)
-                    semantic = self._classify_date_semantic_context(text)
-                    has_tier1 = self._has_tier1_temporal(text)
-                    anchor = self._extract_encounter_anchor(text)
-                    parsed_date = self._parse_date_safe(target_text)
-
-                    # 1. TIER 1 — ALWAYS REDACT (DOB, Admission)
-                    if tier == "TIER_1":
-                        replacement = "[REDACTED DATE]"
-                        
-                    # 2. TIER 2 — HISTORICAL (Keep Year Only)
-                    elif tier == "TIER_2":
-                        year_match = re.search(r"\b\d{4}\b", target_text)
-                        replacement = year_match.group(0) if year_match else "[REDACTED DATE]"
-
-                    # 3. TIER 3 — CLINICAL TIMELINE (Lab Results)
-                    elif tier == "TIER_3":
-                        # MANDATORY LINKAGE SAFETY: If Tier 1 (DOB) is present, 
-                        # we MUST convert to relative even if anchor is missing.
-                        if has_tier1:
-                            if anchor and parsed_date:
-                                replacement = self._relative_to_anchor(parsed_date, anchor)
-                            else:
-                                # Safe fallback per policy: use coarse phrase
-                                replacement = "prior to the encounter"
-                        else:
-                            # No Tier 1 identifiers? We can safely show the clinical date.
-                            # But usually, in HIPAA/GDPR, we prefer [REDACTED DATE] or relative.
-                            replacement = "[REDACTED DATE]"
-                    else:
-                        replacement = "[REDACTED DATE]"
-
-                    # CRITICAL: Apply the replacement to the string
-                    redacted_text = (
-                        redacted_text[:start]
-                        + replacement
-                        + redacted_text[end:]
-                    )
-                    applied_rules.add("DATE")
-                    continue # Move to next match
+                # Default redaction for non-date rules
+                tag = f"[REDACTED {self._determine_tag_type(rule_name)}]"
+                redacted_text = redacted_text[:start] + tag + redacted_text[end:]
+                applied_rules.add(self._determine_tag_type(rule_name))
+                
+        return redacted_text
 
 
     def _determine_tag_type(self, rule_name: str) -> str:
