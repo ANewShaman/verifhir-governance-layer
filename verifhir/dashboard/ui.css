@@ -1,3 +1,5 @@
+/* d:\verifhir\verifhir-governance-layer\verifhir\dashboard\ui.css */
+
 /* ============================================
    VeriFHIR Governance Console - Production CSS
    Streamlit-Compatible | Dark Enterprise Theme
@@ -13,9 +15,19 @@
     background: transparent;
 }
 
+/* --- SIDEBAR: WIDENED + NO GLASSMORPHISM --- */
 [data-testid="stSidebar"] {
     background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
     border-right: 1px solid rgba(255,255,255,0.06);
+    min-width: 320px;
+}
+
+/* Remove glassmorphism from sidebar blocks only */
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div {
+    background: transparent !important;
+    border: none !important;
+    padding: 0.75rem 0 !important;
+    backdrop-filter: none !important;
 }
 
 /* --- TYPOGRAPHY --- */
@@ -33,11 +45,15 @@ h1 {
 h2 {
     font-size: 1.5rem;
     color: #cbd5e1;
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
 }
 
 h3 {
     font-size: 1.25rem;
     color: #94a3b8;
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
 }
 
 p, li, span {
@@ -45,13 +61,25 @@ p, li, span {
     line-height: 1.6;
 }
 
-/* --- GLASSMORPHISM CARDS --- */
-[data-testid="stVerticalBlock"] > div {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.06);
+/* --- REMOVE CARD SPAM: Don't wrap everything --- */
+[data-testid="stVerticalBlock"] > div:not([data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div) {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+}
+
+/* --- PRIMARY OUTPUT CONTAINER (Redaction Review) --- */
+.output-container {
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
-    padding: 1.5rem;
-    backdrop-filter: blur(8px);
+    padding: 32px;
+    font-family: 'SF Mono', 'Consolas', monospace;
+    line-height: 1.9;
+    color: #cbd5e1;
+    min-height: 60vh;
+    max-height: 80vh;
+    overflow-y: auto;
 }
 
 /* --- BUTTONS --- */
@@ -91,7 +119,7 @@ input:focus, textarea:focus, select:focus {
     box-shadow: 0 0 0 1px #0284c7 !important;
 }
 
-/* --- REDACTION CHIPS (TONED DOWN) --- */
+/* --- REDACTION CHIPS --- */
 .redaction-chip {
     background: rgba(59, 130, 246, 0.15);
     color: #60a5fa;
@@ -122,19 +150,7 @@ input:focus, textarea:focus, select:focus {
     font-size: 0.875rem;
 }
 
-/* --- OUTPUT CONTAINERS --- */
-.output-container {
-    background: rgba(15, 23, 42, 0.8);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
-    padding: 1.5rem;
-    font-family: 'SF Mono', 'Consolas', monospace;
-    line-height: 1.7;
-    color: #cbd5e1;
-    overflow-y: auto;
-}
-
-/* --- COMPLIANCE BANNER (TONED DOWN) --- */
+/* --- COMPLIANCE BANNER --- */
 .compliance-banner {
     background: rgba(15, 23, 42, 0.9);
     border-left: 3px solid #0284c7;
@@ -145,24 +161,7 @@ input:focus, textarea:focus, select:focus {
     margin-bottom: 1.5rem;
 }
 
-/* --- EVIDENCE CARDS (DARK THEME) --- */
-.evidence-card {
-    background: rgba(30, 41, 59, 0.6);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 8px;
-    padding: 1.5rem;
-    margin: 1rem 0;
-}
-
-.evidence-card h3 {
-    color: #e2e8f0;
-    font-size: 1.1rem;
-    font-weight: 500;
-    margin-top: 0;
-    margin-bottom: 1rem;
-}
-
-/* --- STATUS INDICATORS (MUTED) --- */
+/* --- STATUS INDICATORS --- */
 .status-success {
     color: #4ade80;
     background: rgba(74, 222, 128, 0.1);
@@ -248,6 +247,6 @@ hr {
     font-size: 0.875rem;
 }
 
-/* --- REMOVE STREAMLIT BRANDING (OPTIONAL) --- */
+/* --- REMOVE STREAMLIT BRANDING --- */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}

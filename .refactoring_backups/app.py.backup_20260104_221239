@@ -224,8 +224,9 @@ with st.sidebar:
     regulation = regulation_keys[selected_index]
     reg_info = REGULATION_INFO[regulation]
     
-    # Display regulation details
-    st.info(f"**{reg_info['full_name']}**\n\n{reg_info['description']}")
+    # Display regulation details (quieted - no info box)
+    st.caption(f"**{reg_info['full_name']}**")
+    st.caption(reg_info['description'])
     
     # Country code (auto-populated or customizable)
     if regulation == "GDPR":
@@ -242,11 +243,9 @@ with st.sidebar:
     
     st.subheader("Engine Intelligence")
     if engine.client:
-        st.success("● Hybrid Mode Active")
-        st.caption("AI Redactor + Deterministic Fallback")
+        st.caption("Hybrid Mode Active — AI Redactor + Deterministic Fallback")
     else:
-        st.warning("● Fallback Mode Active")
-        st.caption("Deterministic Pattern Matching Only")
+        st.caption("Fallback Mode Active — Deterministic Pattern Matching Only")
 
     st.divider()
     
@@ -769,16 +768,17 @@ with tab1:
                 st.markdown("**Changes Detected:**")
                 diff_html = generate_diff_html(res['original_text'], res['suggested_redaction'])
                 
-                st.markdown(
+                                st.markdown(
                     f"""
                     <div style="
-                        border: 2px solid #e5e7eb; 
-                        border-radius: 10px; 
-                        padding: 24px; 
-                        height: 400px; 
-                        overflow-y: auto; 
-                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; 
-                        white-space: pre-wrap; 
+                        border: 1px solid rgba(255, 255, 255, 0.1);
+                        border-radius: 10px;
+                        padding: 32px;
+                        min-height: 60vh;
+                        max-height: 80vh;
+                        overflow-y: auto;
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+                        white-space: pre-wrap;
                         background: linear-gradient(to bottom, #ffffff 0%, #fafafa 100%);
                         line-height: 1.9;
                         color: #1f2937;
@@ -786,7 +786,7 @@ with tab1:
                         box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.06);">
                         {diff_html}
                     </div>
-                    """, 
+                    """,
                     unsafe_allow_html=True
                 )
             else:
@@ -1014,15 +1014,9 @@ with tab2:
         audit = res.get('audit_metadata', {})
         declared_purpose = st.session_state.get('declared_purpose', 'Not yet declared')
         
-        # Explainability
-        st.markdown(
-            """
-            <div style='background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; padding: 20px; margin: 20px 0;'>
-            <h3 style='color: #e2e8f0; margin-top: 0; font-size: 1.1em; font-weight: 500;'>Explainability</h3>
-            <h4 style='color: #cbd5e1; margin-top: 16px; margin-bottom: 12px; font-size: 0.95em; font-weight: 400;'>How this decision was made</h4>
-            """,
-            unsafe_allow_html=True
-        )
+                # Explainability (flattened to markdown)
+        st.markdown("### Explainability")
+        st.markdown("**How this decision was made**")
         
         st.markdown("**1. Detection signals used**")
         st.markdown("* Azure OpenAI (verifhir-gpt-4o): contextual PHI observation (advisory)")
@@ -1053,16 +1047,10 @@ with tab2:
         
         st.markdown("</div>", unsafe_allow_html=True)
         
-        # Negative Assurance Visibility
+        # Negative Assurance Visibility (flattened)
         negative_assertions = audit.get('negative_assertions', [])
         if negative_assertions:
-            st.markdown(
-                """
-                <div style='background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; padding: 20px; margin: 20px 0;'>
-                <h3 style='color: #e2e8f0; margin-top: 0; font-size: 1.1em; font-weight: 500;'>Checked & Not Detected (Within Detector Coverage)</h3>
-                """,
-                unsafe_allow_html=True
-            )
+            st.markdown("### Checked & Not Detected (Within Detector Coverage)")
             
             category_display_map = {
                 "Biometric Identifiers": "Biometric identifiers",
@@ -1095,14 +1083,8 @@ with tab2:
             
             st.markdown("</div>", unsafe_allow_html=True)
         
-        # Forensic Evidence
-        st.markdown(
-            """
-            <div style='background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; padding: 20px; margin: 20px 0;'>
-            <h3 style='color: #e2e8f0; margin-top: 0; font-size: 1.1em; font-weight: 500;'>Forensic Evidence (Read-Only)</h3>
-            """,
-            unsafe_allow_html=True
-        )
+        # Forensic Evidence (flattened)
+        st.markdown("### Forensic Evidence (Read-Only)")
         
         st.markdown("**Audit Proof Metadata**")
         

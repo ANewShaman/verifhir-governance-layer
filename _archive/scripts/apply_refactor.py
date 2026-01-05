@@ -32,7 +32,20 @@ from typing import Dict, List, Tuple, Optional
 # CONFIGURATION
 # ============================================================================
 
-PROJECT_ROOT = Path(__file__).parent
+# Robust PROJECT_ROOT detection (works if script is run from repo root or from verifhir/dashboard)
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+# Prefer repo root where apply_refactor.py is placed; otherwise search up to two parents
+candidate_roots = [SCRIPT_DIR, SCRIPT_DIR.parent, SCRIPT_DIR.parents[1] if len(SCRIPT_DIR.parents) > 1 else SCRIPT_DIR]
+PROJECT_ROOT = None
+for cand in candidate_roots:
+    if (cand / "verifhir" / "dashboard" / "app.py").exists() and (cand / "apply_refactor.py").exists():
+        PROJECT_ROOT = cand
+        break
+# fallback to script dir
+if PROJECT_ROOT is None:
+    PROJECT_ROOT = SCRIPT_DIR
+
 DASHBOARD_DIR = PROJECT_ROOT / "verifhir" / "dashboard"
 APP_PY_PATH = DASHBOARD_DIR / "app.py"
 UI_CSS_PATH = DASHBOARD_DIR / "ui.css"
