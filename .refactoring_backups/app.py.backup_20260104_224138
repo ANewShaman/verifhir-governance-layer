@@ -263,7 +263,7 @@ with st.sidebar:
     st.caption(f"VeriFHIR Core {engine.PROMPT_VERSION}")
 
 # --- DEMO CASE LIBRARY (NORMALIZED) ---
-DEMO_CASES = {
+REG_DEMO_CASES = {
     "": {"input": "", "input_mode": "TEXT", "metadata": {}},
     
     # GROUP A: TEXT CASES
@@ -378,7 +378,7 @@ tab1, tab2 = st.tabs(["Review & Decision", "Governance Evidence"])
 
 with tab1:
     # Load Example Case Dropdown
-    demo_case_options = [""] + list(DEMO_CASES.keys())[1:]
+    demo_case_options = [""] + list(REG_DEMO_CASES.keys())[1:]
     selected_demo = st.selectbox(
         "Load Example Case",
         options=demo_case_options,
@@ -388,7 +388,7 @@ with tab1:
     
     # Handle demo case selection
     if selected_demo and selected_demo != st.session_state.selected_demo_case:
-        case = DEMO_CASES[selected_demo]
+        case = REG_DEMO_CASES[selected_demo]
         st.session_state.selected_demo_case = selected_demo
         st.session_state.input_mode = case["input_mode"]
         st.session_state.current_result = None
@@ -406,7 +406,7 @@ with tab1:
     
     # Display demo case metadata if selected
     if selected_demo and selected_demo != "":
-        case_meta = DEMO_CASES[selected_demo]["metadata"]
+        case_meta = REG_DEMO_CASES[selected_demo]["metadata"]
         meta_parts = [
             f"Source: {case_meta.get('source', 'N/A')}",
             f"Patient ID: {case_meta.get('patient_id', 'N/A')}",
@@ -523,8 +523,8 @@ with tab1:
                     input_text = st.session_state.ocr_extracted_text
                     
             elif st.session_state.input_mode == "HL7":
-                if selected_demo and DEMO_CASES[selected_demo]["input_mode"] == "HL7":
-                    default_hl7 = DEMO_CASES[selected_demo]["input"]
+                if selected_demo and REG_REG_DEMO_CASES[selected_demo]["input_mode"] == "HL7":
+                    default_hl7 = REG_DEMO_CASES[selected_demo]["input"]
                 else:
                     default_hl7 = "MSH|^~\\&|SendingApp|SendingFacility|ReceivingApp|ReceivingFacility|20240115120000||ADT^A01|12345|P|2.5\nPID|1||123456^^^MRN||DOE^JOHN^MIDDLE||19800115|M|||123 MAIN ST^^CITY^ST^12345||555-1234|||"
                 input_text = st.text_area(
@@ -536,8 +536,8 @@ with tab1:
                 st.session_state.last_input_text = input_text
                 
             else:  # TEXT mode
-                if selected_demo and DEMO_CASES[selected_demo]["input_mode"] == "TEXT":
-                    default_text = DEMO_CASES[selected_demo]["input"]
+                if selected_demo and REG_REG_DEMO_CASES[selected_demo]["input_mode"] == "TEXT":
+                    default_text = REG_DEMO_CASES[selected_demo]["input"]
                 else:
                     default_fhir = {
                         "resourceType": "Patient",

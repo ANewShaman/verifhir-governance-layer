@@ -16,6 +16,9 @@ import hashlib
 import os
 import re
 
+# NEW: Import demo cases as single source of truth
+from verifhir.dashboard.demo_cases import demo_cases as REG_DEMO_CASES
+
 def safe_text(value):
     """
     Escape user-controlled text only.
@@ -88,6 +91,115 @@ REGULATION_INFO = {
         "description": "Technology-neutral privacy principles for universal application"
     }
 }
+
+# FIXED: Regulation mapping with exact key matching
+REG_MAP = {
+    "HIPAA": "hipaa",
+    "LGPD": "lgpd",
+    "UK_GDPR": "uk_gdpr",
+    "GDPR": "eu_gdpr",
+    "DPDP": "india_dpdp",
+    "BASE": "base_cases"
+}
+
+# NEW: Helper function to map data types to demo cases
+def get_demo_options_by_type(data_type, regulation):
+    """
+    Returns list of (display_name, case_key, regulation_key) tuples
+    for the given data_type and regulation context.
+    
+    data_type: 'text/json', 'hl7', 'docs'
+    regulation: selected regulation from REGULATION_INFO
+    """
+    options = []
+    
+    # FIXED: Use global REG_MAP for consistency
+    reg_key = REG_MAP.get(regulation, "base_cases")
+    
+    # FIXED: Add safety check for regulation existence
+    if reg_key not in REG_DEMO_CASES:
+        return options
+    
+    reg_cases = REG_DEMO_CASES[reg_key]
+    
+    # Map data types to case types in demo_cases.py
+    if data_type == "text/json":
+        # FIXED: Use .get() to prevent KeyError
+        if reg_cases.get("json_fhir"):
+            options.append((f"{regulation} - JSON FHIR Patient", "json_fhir", reg_key))
+        if reg_cases.get("structured_text"):
+            options.append((f"{regulation} - Structured Text", "structured_text", reg_key))
+        if reg_cases.get("structured_discharge_summary"):
+            options.append((f"{regulation} - Discharge Summary", "structured_discharge_summary", reg_key))
+        if reg_cases.get("unstructured_text"):
+            options.append((f"{regulation} - Unstructured Clinical Note", "unstructured_text", reg_key))
+        if reg_cases.get("unstructured_discharge_note"):
+            options.append((f"{regulation} - Discharge Note", "unstructured_discharge_note", reg_key))
+        if reg_cases.get("unstructured_discharge"):
+            options.append((f"{regulation} - Patient Discharge Record", "unstructured_discharge", reg_key))
+        if reg_cases.get("structured_json"):
+            options.append((f"{regulation} - Structured JSON Record", "structured_json", reg_key))
+        if reg_cases.get("semi_structured"):
+            options.append((f"{regulation} - Semi-Structured Record", "semi_structured", reg_key))
+        if reg_cases.get("structured_referral"):
+            options.append((f"{regulation} - Referral Letter", "structured_referral", reg_key))
+        if reg_cases.get("unstructured"):
+            options.append((f"{regulation} - Generic Unstructured Note", "unstructured", reg_key))
+        if reg_cases.get("json"):
+            options.append((f"{regulation} - JSON Record", "json", reg_key))
+        # Multi-language GDPR cases
+        if reg_cases.get("french_unstructured"):
+            options.append((f"{regulation} - French Clinical Note", "french_unstructured", reg_key))
+        if reg_cases.get("german_json"):
+            options.append((f"{regulation} - German Discharge Note", "german_json", reg_key))
+        if reg_cases.get("spanish_semi_structured"):
+            options.append((f"{regulation} - Spanish Record", "spanish_semi_structured", reg_key))
+            
+    elif data_type == "hl7":
+        # Look for HL7 v2 messages
+        if reg_cases.get("hl7_v2_adt"):
+            options.append((f"{regulation} - HL7 v2 ADT Message", "hl7_v2_adt", reg_key))
+            
+    elif data_type == "docs":
+        # Look for OCR/document cases
+        if reg_cases.get("ocr_style"):
+            options.append((f"{regulation} - Scanned Document (OCR)", "ocr_style", reg_key))
+    
+    return options
+
+# NEW: Helper function to extract text from demo case
+def extract_demo_text(reg_key, case_key):
+    """
+    Extracts displayable text from a demo case.
+    Handles dict, str, and nested structures.
+    """
+    try:
+        case_data = REG_DEMO_CASES[reg_key][case_key]
+        
+        if isinstance(case_data, str):
+            return case_data
+        elif isinstance(case_data, dict):
+            return json.dumps(case_data, indent=2, ensure_ascii=False)
+        else:
+            return str(case_data)
+    except KeyError as e:
+        st.error(f"Demo case not found: {reg_key}/{case_key}")
+        return ""
+    except Exception as e:
+        st.error(f"Error extracting demo text: {str(e)}")
+        return ""
+
+# NEW: Helper function to determine input mode from case type
+def get_input_mode_from_case(case_key):
+    """
+    Determines the appropriate input mode based on case type.
+    """
+    if "hl7" in case_key.lower():
+        return "HL7"
+    elif "ocr" in case_key.lower():
+        return "DOCUMENT_OCR"
+    else:
+        return "TEXT"
 
 # --- HELPER: ENHANCED VISUAL DIFF GENERATOR ---
 def generate_diff_html(original, redacted):
@@ -241,9 +353,9 @@ with st.sidebar:
     
     st.subheader("Engine Intelligence")
     if engine.client:
-        st.caption("Hybrid Mode Active — AI Redactor + Deterministic Fallback")
+        st.caption("Hybrid Mode Active – AI Redactor + Deterministic Fallback")
     else:
-        st.caption("Fallback Mode Active — Deterministic Pattern Matching Only")
+        st.caption("Fallback Mode Active – Deterministic Pattern Matching Only")
 
     st.divider()
     
@@ -259,71 +371,6 @@ with st.sidebar:
     st.divider()
     st.caption(f"VeriFHIR Core {engine.PROMPT_VERSION}")
 
-# --- DEMO CASE LIBRARY ---
-DEMO_CASES = {
-    "": {"input": "", "input_mode": "TEXT", "metadata": {}},
-    
-    "Clean discharge note": {
-        "input": "DISCHARGE SUMMARY\n\nPatient admitted on 02/10/2024 for routine procedure.\nNo complications observed.\nPatient's father died at age 89.\nStarted metformin on 2023-01-15.\nDischarged on 02/12/2024 in stable condition.",
-        "input_mode": "TEXT",
-        "metadata": {
-            "source": "Synthea",
-            "patient_id": "syn-patient-004",
-            "status": "Synthetic / De-identified"
-        }
-    },
-    "Smart redaction example": {
-        "input": "Patient's father died at age 89. Started metformin on 2023-01-15. Patient lives at 123 Main St.",
-        "input_mode": "TEXT",
-        "metadata": {
-            "source": "Synthea",
-            "patient_id": "syn-patient-006",
-            "status": "Synthetic / De-identified"
-        }
-    },
-    
-    "HL7 ADT message": {
-        "input": "MSH|^~\\&|SendingApp|SendingFacility|ReceivingApp|ReceivingFacility|20240115120000||ADT^A01|12345|P|2.5\nPID|1||123456^^^MRN||SMITH^JOHN^MIDDLE||19800115|M|||123 MAIN ST^^CITY^ST^12345||555-1234|||",
-        "input_mode": "HL7",
-        "metadata": {
-            "source": "Synthea",
-            "patient_id": "syn-patient-005",
-            "status": "Synthetic / De-identified"
-        }
-    },
-    
-    "Insurance form photo": {
-        "input": "Patient Name: Sarah Chen\nPolicy Number: INS-987654321\nSSN: 456-78-9012\nDate of Service: 03/15/2024\nProvider: Dr. Michael Rodriguez\nAddress: 789 Medical Plaza, Suite 200, San Francisco, CA 94102",
-        "input_mode": "DOCUMENT_OCR",
-        "metadata": {
-            "source": "Synthea",
-            "patient_id": "syn-patient-001",
-            "status": "Synthetic / De-identified",
-            "ocr_confidence": 0.92
-        }
-    },
-    "Referral letter scan": {
-        "input": "REFERRAL LETTER\n\nTo: Dr. James Wilson, Cardiology\nFrom: Dr. Emily Martinez, Primary Care\n\nPatient: Robert Kim (MRN: M-123456)\nDOB: 11/22/1978\nReason: Cardiac evaluation for chest pain\nAddress: 456 Oak Street, Apt 3B, Los Angeles, CA 90001\nPhone: (310) 555-7890",
-        "input_mode": "DOCUMENT_OCR",
-        "metadata": {
-            "source": "Synthea",
-            "patient_id": "syn-patient-002",
-            "status": "Synthetic / De-identified",
-            "ocr_confidence": 0.88
-        }
-    },
-    "Lab report screenshot": {
-        "input": "LABORATORY REPORT\n\nPatient: Jennifer Lee\nLab ID: LAB-789012\nDate: 2024-01-20\n\nResults:\n- Glucose: 95 mg/dL\n- Cholesterol: 180 mg/dL\n- Patient DOB: 05/14/1985\n- MRN: L-456789",
-        "input_mode": "DOCUMENT_OCR",
-        "metadata": {
-            "source": "Synthea",
-            "patient_id": "syn-patient-003",
-            "status": "Synthetic / De-identified",
-            "ocr_confidence": 0.91
-        }
-    }
-}
-
 # --- INPUT MODE MAPPING ---
 INPUT_MODES = {
     "Text / JSON": "TEXT",
@@ -331,15 +378,13 @@ INPUT_MODES = {
     "Image / Document (OCR)": "DOCUMENT_OCR",
 }
 
-# --- INITIALIZE SESSION STATE ---
+# --- INITIALIZE SESSION STATE (FIXED) ---
 if "current_result" not in st.session_state:
     st.session_state.current_result = None
 if "input_provenance" not in st.session_state:
-    st.session_state.input_provenance = None
+    st.session_state.input_provenance = None  # FIXED: Initialize as None, not {}
 if "declared_purpose" not in st.session_state:
     st.session_state.declared_purpose = "Not yet declared"
-if "selected_demo_case" not in st.session_state:
-    st.session_state.selected_demo_case = ""
 if "input_mode" not in st.session_state:
     st.session_state.input_mode = "TEXT"
 if "ocr_extracted_text" not in st.session_state:
@@ -350,6 +395,19 @@ if "uploaded_image" not in st.session_state:
     st.session_state.uploaded_image = None
 if "last_input_text" not in st.session_state:
     st.session_state.last_input_text = ""
+# NEW: Session state for demo selection (FIXED)
+if "selected_data_type" not in st.session_state:
+    st.session_state.selected_data_type = ""
+if "selected_demo_case" not in st.session_state:
+    st.session_state.selected_demo_case = None
+if "last_regulation" not in st.session_state:
+    st.session_state.last_regulation = regulation
+
+# FIXED: Reset demo selection if regulation changes
+if st.session_state.last_regulation != regulation:
+    st.session_state.selected_data_type = ""
+    st.session_state.selected_demo_case = None
+    st.session_state.last_regulation = regulation
 
 # --- MAIN WORKSPACE ---
 st.title("VeriFHIR Governance Console")
@@ -371,58 +429,112 @@ st.markdown(
 tab1, tab2 = st.tabs(["Review & Decision", "Governance Evidence"])
 
 with tab1:
-    # Load Example Case Dropdown
-    demo_case_options = [""] + list(DEMO_CASES.keys())[1:]
-    selected_demo = st.selectbox(
-        "Load Example Case",
-        options=demo_case_options,
-        index=0,
-        help="Select a demo case to load. This will populate the input and reset session state."
+    # MODIFIED: New two-level dropdown system replacing old demo case dropdown
+    st.markdown("### Load Example Case")
+    
+    # Level 1: Data Type Dropdown
+    data_type_options = ["", "text/json", "hl7", "docs"]
+    
+    # FIXED: Preserve selection across reruns
+    current_data_type_idx = 0
+    if st.session_state.selected_data_type in data_type_options:
+        current_data_type_idx = data_type_options.index(st.session_state.selected_data_type)
+    
+    selected_data_type = st.selectbox(
+        "Select Data Type",
+        options=data_type_options,
+        index=current_data_type_idx,
+        help="Choose the type of clinical data to demonstrate",
+        key="data_type_selector"
     )
     
-    # Handle demo case selection
-    if selected_demo and selected_demo != st.session_state.selected_demo_case:
-        case = DEMO_CASES[selected_demo]
-        st.session_state.selected_demo_case = selected_demo
-        st.session_state.input_mode = case["input_mode"]
-        st.session_state.current_result = None
-        st.session_state.input_provenance = None
-        st.session_state.last_input_text = case["input"]
-        if case["input_mode"] == "DOCUMENT_OCR":
-            st.session_state.ocr_extracted_text = case["input"]
-            st.session_state.ocr_confidence = case["metadata"].get("ocr_confidence", 0.9)
-            st.session_state.uploaded_image = None
-        else:
-            st.session_state.ocr_extracted_text = None
-            st.session_state.ocr_confidence = None
-            st.session_state.uploaded_image = None
-        st.rerun()
+    # Update session state
+    if selected_data_type != st.session_state.selected_data_type:
+        st.session_state.selected_data_type = selected_data_type
+        st.session_state.selected_demo_case = None  # Reset demo case when data type changes
     
-    # Display demo case metadata if selected
-    if selected_demo and selected_demo != "":
-        case_meta = DEMO_CASES[selected_demo]["metadata"]
-        meta_parts = [
-            f"Source: {case_meta.get('source', 'N/A')}",
-            f"Patient ID: {case_meta.get('patient_id', 'N/A')}",
-            f"Status: {case_meta.get('status', 'N/A')}"
-        ]
-        if case_meta.get('ocr_confidence'):
-            meta_parts.append(f"OCR confidence: {case_meta.get('ocr_confidence', 'N/A')}")
-        st.caption(" | ".join(meta_parts))
+    # Level 2: Regulation-specific demo cases (dependent on Level 1)
+    if selected_data_type and selected_data_type != "":
+        demo_options = get_demo_options_by_type(selected_data_type, regulation)
+        
+        if demo_options:
+            demo_labels = ["-- Select Example --"] + [opt[0] for opt in demo_options]
+            
+            # FIXED: Preserve selection with bounds checking
+            current_demo_idx = 0
+            if st.session_state.selected_demo_case:
+                try:
+                    # Find matching index
+                    for idx, (display_name, case_key, reg_key) in enumerate(demo_options):
+                        if st.session_state.selected_demo_case == (reg_key, case_key):
+                            current_demo_idx = idx + 1
+                            break
+                except Exception:
+                    current_demo_idx = 0
+            
+            selected_demo_idx = st.selectbox(
+                f"Select {regulation} Example for {selected_data_type}",
+                options=range(len(demo_labels)),
+                format_func=lambda i: demo_labels[i],
+                index=current_demo_idx,
+                help=f"Regulation-specific examples for {selected_data_type} data",
+                key="demo_case_selector"
+            )
+            
+            # Handle demo selection
+            if selected_demo_idx > 0:
+                try:
+                    display_name, case_key, reg_key = demo_options[selected_demo_idx - 1]
+                    
+                    # Check if selection changed
+                    current_selection = (reg_key, case_key)
+                    if st.session_state.selected_demo_case != current_selection:
+                        st.session_state.selected_demo_case = current_selection
+                        
+                        # Load demo case
+                        demo_text = extract_demo_text(reg_key, case_key)
+                        
+                        if demo_text:  # FIXED: Only update if text extraction succeeded
+                            demo_mode = get_input_mode_from_case(case_key)
+                            
+                            # Update session state
+                            st.session_state.input_mode = demo_mode
+                            st.session_state.last_input_text = demo_text
+                            st.session_state.current_result = None
+                            st.session_state.input_provenance = None
+                            
+                            # Handle OCR cases
+                            if demo_mode == "DOCUMENT_OCR":
+                                st.session_state.ocr_extracted_text = demo_text
+                                st.session_state.ocr_confidence = 0.92
+                                st.session_state.uploaded_image = None
+                            else:
+                                st.session_state.ocr_extracted_text = None
+                                st.session_state.ocr_confidence = None
+                                st.session_state.uploaded_image = None
+                            
+                            st.rerun()
+                    
+                    # Display metadata
+                    st.caption(f"**Loaded:** {display_name} | **Mode:** {get_input_mode_from_case(case_key)}")
+                    
+                except IndexError as e:
+                    st.error(f"Demo case selection error: Invalid index. Please reselect.")
+                except Exception as e:
+                    st.error(f"Error loading demo case: {str(e)}")
+        else:
+            st.info(f"No {regulation} examples available for {selected_data_type}")
+    
+    st.markdown("---")
     
     # ========== PHASE 1 OR PHASE 2 LAYOUT ==========
-    # Phase 1: Before analysis (side-by-side allowed)
-    # Phase 2: After analysis (vertical flow only)
-    
     if st.session_state.current_result:
         # PHASE 2: VERTICAL FLOW (After Analysis)
-        # 1. Source Input (collapsed/read-only, at top)
         st.markdown("### Source Record")
         if st.session_state.judge_mode:
             with st.expander("Source Input (Locked)", expanded=False):
                 st.text_area("Source Record (Read-Only)", value=st.session_state.get('last_input_text', ''), height=200, disabled=True)
         else:
-            # Standard Mode: visually demoted read-only area
             st.caption("Source Record (Read-Only)")
             st.text_area("Source Record (Read-Only)", value=st.session_state.get('last_input_text', ''), height=150, disabled=True)
         
@@ -554,7 +666,7 @@ with tab1:
                     help="Acknowledgment for audit trail."
                 )
                 
-                submitted = st.form_submit_button("Submit Decision", type="primary", use_container_width="stretch")
+                submitted = st.form_submit_button("Submit Decision", type="primary", use_container_width=True)
             
             # Process form submission
             if submitted:
@@ -590,6 +702,7 @@ with tab1:
                             timestamp=datetime.datetime.utcnow()
                         )
                         
+                        # FIXED: Proper None check for input_provenance
                         if st.session_state.input_provenance is None:
                             st.error("Input provenance not found. Please re-analyze the input.")
                             st.stop()
@@ -674,7 +787,6 @@ with tab1:
             st.markdown("**Negative Assurance (summary)**")
             negs = audit.get('negative_assertions', [])
             if negs:
-                # pick up to 4 categories to summarize
                 summary_cats = [n.get('category') for n in negs[:4]]
                 for cat in summary_cats:
                     st.markdown(f"- {cat}: NOT DETECTED")
@@ -683,7 +795,11 @@ with tab1:
             
             # Short forensic identifiers list
             canonical_fingerprint = hashlib.sha256(res['original_text'].encode()).hexdigest()[:32]
-            system_config_hash_val = st.session_state.input_provenance.system_config_hash if st.session_state.input_provenance else compute_system_config_hash()
+            # FIXED: Safe attribute access with proper None check
+            system_config_hash_val = "UNKNOWN"
+            if st.session_state.input_provenance is not None and hasattr(st.session_state.input_provenance, 'system_config_hash'):
+                system_config_hash_val = st.session_state.input_provenance.system_config_hash
+            
             st.markdown("**Forensic IDs (concise)**")
             st.markdown(f"- Input fingerprint: `{canonical_fingerprint}`")
             st.markdown(f"- System config hash: `{system_config_hash_val}`")
@@ -766,7 +882,7 @@ with tab1:
                     if st.session_state.uploaded_image is not None:
                         col_img, col_text = st.columns(2)
                         with col_img:
-                            st.image(st.session_state.uploaded_image, caption="Uploaded Image", width="stretch")
+                            st.image(st.session_state.uploaded_image, caption="Uploaded Image", use_container_width=True)
                         with col_text:
                             st.text_area(
                                 "Extracted text (used for compliance evaluation)",
@@ -784,10 +900,7 @@ with tab1:
                     input_text = st.session_state.ocr_extracted_text
                     
             elif st.session_state.input_mode == "HL7":
-                if selected_demo and DEMO_CASES[selected_demo]["input_mode"] == "HL7":
-                    default_hl7 = DEMO_CASES[selected_demo]["input"]
-                else:
-                    default_hl7 = "MSH|^~\\&|SendingApp|SendingFacility|ReceivingApp|ReceivingFacility|20240115120000||ADT^A01|12345|P|2.5\nPID|1||123456^^^MRN||DOE^JOHN^MIDDLE||19800115|M|||123 MAIN ST^^CITY^ST^12345||555-1234|||"
+                default_hl7 = st.session_state.last_input_text if st.session_state.last_input_text else "MSH|^~\\&|SendingApp|SendingFacility|ReceivingApp|ReceivingFacility|20240115120000||ADT^A01|12345|P|2.5\nPID|1||123456^^^MRN||DOE^JOHN^MIDDLE||19800115|M|||123 MAIN ST^^CITY^ST^12345||555-1234|||"
                 input_text = st.text_area(
                     "HL7 v2 Message",
                     height=400,
@@ -798,17 +911,13 @@ with tab1:
                 
             else:
                 # TEXT mode
-                if selected_demo and DEMO_CASES[selected_demo]["input_mode"] == "TEXT":
-                    default_text = DEMO_CASES[selected_demo]["input"]
-                else:
-                    default_fhir = {
-                        "resourceType": "Patient",
-                        "id": "example",
-                        "name": [{"family": "Doe", "given": ["John"]}],
-                        "birthDate": "1980-01-15",
-                        "telecom": [{"system": "phone", "value": "555-1234"}]
-                    }
-                    default_text = json.dumps(default_fhir, indent=2)
+                default_text = st.session_state.last_input_text if st.session_state.last_input_text else json.dumps({
+                    "resourceType": "Patient",
+                    "id": "example",
+                    "name": [{"family": "Doe", "given": ["John"]}],
+                    "birthDate": "1980-01-15",
+                    "telecom": [{"system": "phone", "value": "555-1234"}]
+                }, indent=2)
                 input_text = st.text_area(
                     "Text or FHIR JSON",
                     height=400,
@@ -817,7 +926,7 @@ with tab1:
                 )
                 st.session_state.last_input_text = input_text
             
-            analyze_btn = st.button("Analyze & Redact", type="primary", use_container_width="stretch")
+            analyze_btn = st.button("Analyze & Redact", type="primary", use_container_width=True)
         
         with col_output:
             st.subheader("Analysis Output")
@@ -1082,7 +1191,19 @@ with tab2:
 
         # --- ROW 2: FORENSIC EVIDENCE (FULL WIDTH) ---
         canonical_fingerprint = hashlib.sha256(res["original_text"].encode()).hexdigest()[:32]
-        system_hash = st.session_state.input_provenance.system_config_hash if st.session_state.input_provenance else "UNKNOWN"
+        
+        # FIXED: Safe attribute access with proper None check
+        system_hash = "UNKNOWN"
+        original_format = "N/A"
+        ocr_conf = "N/A"
+        
+        if st.session_state.input_provenance is not None:
+            if hasattr(st.session_state.input_provenance, 'system_config_hash'):
+                system_hash = st.session_state.input_provenance.system_config_hash
+            if hasattr(st.session_state.input_provenance, 'original_format'):
+                original_format = st.session_state.input_provenance.original_format
+            if hasattr(st.session_state.input_provenance, 'ocr_confidence') and st.session_state.input_provenance.ocr_confidence:
+                ocr_conf = f"{st.session_state.input_provenance.ocr_confidence:.2f}"
         
         forensic_html = f"""
         <div class="evidence-widget">
@@ -1096,8 +1217,8 @@ with tab2:
                 Input Fingerprint: {safe_text(canonical_fingerprint)}<br/>
                 System Config Hash: {safe_text(system_hash)}<br/><br/>
                 <strong>Data Provenance</strong><br/>
-                Original Format: {safe_text(st.session_state.input_provenance.original_format if st.session_state.input_provenance else "N/A")}<br/>
-                OCR Confidence: {safe_text(st.session_state.input_provenance.ocr_confidence if st.session_state.input_provenance else "N/A")}
+                Original Format: {safe_text(original_format)}<br/>
+                OCR Confidence: {safe_text(ocr_conf)}
             </div>
         </div>
         """
