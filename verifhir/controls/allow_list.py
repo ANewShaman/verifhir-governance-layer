@@ -14,7 +14,27 @@ ALLOWLIST_TERMS = {
     "room",
     "bed",
     "version",
-    "sample data"
+    "sample data",
+    # Additional clinical / common place terms to avoid misclassification
+    "emergency room",
+    "history of",
+    "follow up",
+    "stable",
+    "unremarkable",
+    # common street/place words that may be mis-detected as names
+    "road",
+    "street",
+    "main",
+    "garden",
+    "floor",
+    "block",
+    # additional geographic/place terms requested
+    "flat",
+    "lane",
+    "avenue",
+    "hospital",
+    "clinic",
+    "summary"
 }
 
 def is_allowlisted(violation: Any) -> bool:

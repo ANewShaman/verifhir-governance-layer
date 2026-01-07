@@ -37,7 +37,17 @@ def normalize_input(
     Normalizes input into FHIR for governance evaluation.
 
     HL7 v2 is converted externally and never processed directly.
+
+    Added safeguard: if payload is not a dict and input_format is not HL7v2
+    (e.g., raw text, IMAGE data, unstructured content), wrap it into a
+    FHIR-like DocumentReference structure to prevent downstream TypeErrors.
     """
+    # Grit Filter: Handle non-dictionary payloads (IMAGE, unstructured text, etc.)
+    if not isinstance(payload, dict) and input_format != "HL7v2":
+        payload = {
+            "resourceType": "DocumentReference",
+            "text": {"div": str(payload)}
+        }
 
     if input_format == "HL7v2":
         fhir_bundle = convert_hl7_to_fhir(payload)
@@ -51,7 +61,7 @@ def normalize_input(
             },
         }
 
-    # Default: already FHIR
+    # Default: already FHIR or wrapped unstructured content
     return {
         "bundle": payload,
         "metadata": {

@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 from openai import AzureOpenAI
 from verifhir.remediation.fallback import RegexFallbackEngine
+from verifhir.remediation import patterns as shared_patterns
 
 TEMPORAL_TIER_BLOCK = """
 TEMPORAL HANDLING POLICY (MANDATORY — NO EXCEPTIONS)
@@ -36,7 +37,7 @@ Includes:
 
 
 ────────────────────────────────────────────────────────
-TIER 2 — HITORICAL CONTEXT (YEAR-ONLY RETENTION)
+TIER 2 — HISTORICAL CONTEXT (YEAR-ONLY RETENTION)
 ────────────────────────────────────────────────────────
 Definition:
 Past events that provide medical, familial, or background context and do NOT enable unique patient identification.
@@ -86,7 +87,18 @@ If no encounter date is available:
 → Use a coarse phrase (“prior to the encounter”) without numbers.
 Approved Relative Conversions:
 • “3 months ago”
-• “several years prior
+• “several years prior”
+
+────────────────────────────────────────────────────────
+NON-HIPAA REGULATION SUPPLEMENT (GDPR, UK_GDPR, LGPD, DPDP, BASE)
+────────────────────────────────────────────────────────
+For regulations other than HIPAA:
+• If a date refers to a historical event (Tier 2) or general medical history (Tier 3),
+  do NOT redact the year.
+• Preserve the year where appropriate OR convert to a relative duration
+  (e.g., “3 years ago”, “5 years prior”).
+• Only fully redact dates if they fall under Tier 1
+  (Admission date, DOB, Discharge date, or equivalent direct identifiers).
 
 ────────────────────────────────────────────────────────
 STRICT PROHIBITIONS (ABSOLUTE)
@@ -201,7 +213,7 @@ class RedactionEngine:
                 
                 if not validation_result["valid"]:
                     self.logger.warning(f"AI validation failed: {validation_result['reason']}")
-                    return self._execute_fallback(text, validation_result["reason"], regulation)
+                    return self._execute_fallback(text, validation_result["reason"], regulation, country)
 
                 # Clean up the response
                 clean_suggestion = self._clean_ai_response(raw_suggestion)
@@ -209,12 +221,11 @@ class RedactionEngine:
                 if regulation == "HIPAA" and self._hipaa_temporal_violation(clean_suggestion):
                     self.logger.warning("HIPAA temporal violation detected in AI output — falling back")
                     return self._execute_fallback(
-                    text,
-                    "HIPAA temporal violation in AI output",
-                    regulation
-                )
-
-
+                        text,
+                        "HIPAA temporal violation in AI output",
+                        regulation,
+                        country
+                    )
                 elapsed = (datetime.datetime.now(datetime.timezone.utc) - start_time).total_seconds()
                 
                 return self._create_response(
@@ -232,10 +243,10 @@ class RedactionEngine:
 
             except Exception as e:
                 self.logger.error(f"AI redaction error: {str(e)}")
-                return self._execute_fallback(text, f"AI Error: {str(e)}", regulation)
+                return self._execute_fallback(text, f"AI Error: {str(e)}", regulation, country)
         
         # No AI available - use fallback directly
-        return self._execute_fallback(text, "Service Offline - AI Unavailable", regulation)
+        return self._execute_fallback(text, "Service Offline - AI Unavailable", regulation, country)
 
     def _add_canary_tokens(self, text: str) -> str:
         """Add canary tokens to test comprehensive redaction"""
@@ -291,6 +302,21 @@ class RedactionEngine:
         
         return universal_examples
 
+    def _apply_country_overrides(self, country: str):
+        """
+        Apply simple jurisdiction-specific behavior by overlaying shared patterns
+        or adjusting conservative enforcement. This keeps fallback >= AI strictness
+        by enabling country-specific ID patterns where available.
+        """
+        try:
+            # Example: overlay Indian Aadhaar stricter behavior when country == IN
+            if country and country.upper() == "IN":
+                if "INDIAN_AADHAAR" in shared_patterns.PATTERNS:
+                    self.fallback_engine._PATTERNS["INDIAN_AADHAAR"] = shared_patterns.PATTERNS["INDIAN_AADHAAR"]
+            # Additional country-specific overlays can be added here
+        except Exception:
+            self.logger.debug("Country overrides unavailable or failed")
+
     def _validate_ai_response(self, response: str, augmented_text: str) -> Dict[str, Any]:
         """
         Multi-level validation to ensure AI properly redacted all PII/PHI.
@@ -322,7 +348,7 @@ class RedactionEngine:
                     "reason": "AI Safety Filter Refusal Detected"
                 }
 
-        # Check 3: Response must contain redaction tags
+        # Check 3: Response must contain redaction tags (positive allowlist)
         if "[REDACTED" not in response:
             return {
                 "valid": False,
@@ -407,26 +433,13 @@ class RedactionEngine:
     ) -> Dict[str, Any]:
         """
         Create a standardized response dictionary for redaction results.
-        
-        Args:
-            original_text: The original input text
-            suggested_redaction: The redacted/suggested output text
-            remediation_method: Description of the method used (e.g., "Azure OpenAI (gpt-4o) - HIPAA")
-            metadata: Dictionary containing additional metadata (timestamp, rules_applied, etc.)
-        
-        Returns:
-            Dict containing original_text, suggested_redaction, remediation_method, 
-            is_authoritative, and audit_metadata
         """
-        # Determine if this is an authoritative AI response or fallback
         is_authoritative = "Azure OpenAI" in remediation_method or "OpenAI" in remediation_method
         
-        # Build audit_metadata with regulation_context if available
         audit_metadata = metadata.copy()
         if "regulation" in audit_metadata:
             audit_metadata["regulation_context"] = audit_metadata["regulation"]
         elif "rules_applied" in audit_metadata:
-            # For fallback, infer regulation from context if possible
             audit_metadata["regulation_context"] = "BASE"
         
         return {
@@ -437,24 +450,37 @@ class RedactionEngine:
             "audit_metadata": audit_metadata
         }
 
-    def _execute_fallback(self, text: str, reason: str, regulation: str = "BASE") -> Dict[str, Any]:
-        """Execute regex-based fallback redaction"""
-        self.logger.info(f"Executing regex fallback: {reason}")
-        
+    def _execute_fallback(self, text: str, reason: str, regulation: str = "BASE", country: str = "US") -> Dict[str, Any]:
+        """Execute regex-based fallback redaction."""
+        self.logger.info(f"Executing regex fallback: {reason} (reg={regulation} country={country})")
+
         safe_text, rules = self.fallback_engine.redact(text)
-        
-        return self._create_response(
-            text, 
-            safe_text, 
-            "Regex Fallback Engine", 
-            {
-                "reason": reason,
-                "rules_applied": rules,
-                "rule_count": len(rules),
-                "regulation": regulation,
-                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
-            }
-        )
+
+        for token_name, token_value in self.CANARY_TOKENS.items():
+            if token_value in str(safe_text):
+                self.logger.warning(f"Fallback did not remove canary token {token_name}; applying explicit redaction")
+                safe_text = str(safe_text).replace(token_value, f"[REDACTED {token_name.upper()}]")
+                if f"{token_name.upper()}" not in rules:
+                    rules.append(f"CANARY_{token_name.upper()}")
+
+        if regulation == "HIPAA" and self._hipaa_temporal_violation(str(safe_text)):
+            self.logger.warning("HIPAA temporal violation detected in fallback output — applying extra redaction of dates")
+            safe_text = re.sub(r"\b\d{4}-\d{2}-\d{2}\b", "[REDACTED DATE]", str(safe_text))
+            safe_text = re.sub(r"\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b", "[REDACTED DATE]", str(safe_text))
+            safe_text = re.sub(r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b", "[REDACTED DATE]", str(safe_text), flags=re.I)
+            if "DATE" not in rules:
+                rules.append("DATE")
+
+        meta = {
+            "reason": reason,
+            "rules_applied": sorted(rules),
+            "rule_count": len(rules),
+            "regulation": regulation,
+            "country": country,
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+        }
+
+        return self._create_response(text, safe_text, "Regex Fallback Engine", meta)
 
     def _build_system_instruction(self, regulation: str, country: str) -> str:
         """
@@ -466,26 +492,9 @@ class RedactionEngine:
         # HIPAA (United States - Health Insurance Portability and Accountability Act)
         # ============================================================
         if regulation == "HIPAA":
-            return f"""You are a specialized HIPAA Compliance Enforcement Engine.
-You are processing SYNTHETIC clinical text for security auditing purposes.
-MANDATORY OPERATING PRINCIPLE:
-Identification risk is CONTEXTUAL, not absolute.
-
-TEMPORAL HANDLING RULES (STRICT):
-- Classify all temporal references before acting.
-- TIER 1 (DOB, admission, discharge): REDACT → [REDACTED DATE]
-- TIER 2 (historical context): KEEP YEAR ONLY
-- TIER 3 (clinical timeline): KEEP or CONVERT TO RELATIVE TIME
-
-FORBIDDEN OUTPUTS:
-- "Started on [REDACTED DATE]"
-- "Diagnosed in [REDACTED DATE]"
-
-REQUIRED OUTPUTS:
-- "Started X months prior to the admission date"
-- "Diagnosed in 1998"
-If a token could plausibly identify a person, device, location, or linkage, it must be destroyed.
-False positives are acceptable. False negatives are not.
+            return f"""You are a HIPAA Safe Harbor Enforcement Engine.
+You are processing SYNTHETIC clinical data for privacy auditing purposes.
+YOUR MANDATE: AGGRESSIVELY REDACT ALL 18 HIPAA IDENTIFIERS.
 
 IMPORTANT CLARIFICATION:
 Temporal data MUST follow the Tier-Based Temporal Handling Policy below.
@@ -507,76 +516,44 @@ TARGET LIST (SEARCH & DESTROY)
 •	URLs, domains, or web links -> [REDACTED URL]
 •	Biometric identifiers (fingerprint, retina, facial, voice) -> [REDACTED BIOMETRIC ID]
 •	Any alphanumeric string explicitly labeled as ID, Serial, Device, IP, or Identifier is automatically hostile and must be redacted
+
 [2] TEMPORAL DATA (DATES & AGE)
-TIER 1 — DIRECT IDENTIFIERS (ALWAYS REDACT)
+Temporal handling is governed exclusively by the Tier-Based Temporal Handling Policy above.
 
-Definition:
-Temporal elements that directly identify, uniquely track,
-or anchor an individual patient or encounter.
-
-IMPORTANT SCOPE RULE:
-Tier 1 applies ONLY to dates directly tied to the patient,
-not relatives or family history.
-
-Includes:
-• Date of birth (DOB)
-• Admission date
-• Discharge date
-• Exact death date of the patient
-• Any date explicitly labeling a patient visit, admission, discharge, or encounter
-
-
-TIER 2 — HISTORICAL CONTEXT (YEAR ONLY)
-EXCLUSION RULE:
-If a historical date refers to a unique patient encounter
-(e.g., hospitalization, admission, inpatient stay),
-it MUST be treated as Tier 1 unless the event is explicitly
-scoped to a family member or relative.
-
-• Diagnosis years
-• Family history events
-• Past surgeries
-
-Definition:
-Temporal information required to understand treatment sequence
-or monitoring cadence that does NOT uniquely identify the patient.
-
-Required Action:
-→ If conversion is required, express time RELATIVE TO THE ENCOUNTER DATE.
-
-MANDATORY FORM:
-• “X days prior to admission”
-• “X weeks prior to admission”
-• “X months prior to admission”
-• “X days after admission” (if applicable)
-
-DO NOT:
-• Reference the current date
-• Use vague phrases (“recently”, “some time ago”)
-• Guess durations
-
-If no encounter date is available:
-→ Use a coarse phrase (“prior to the encounter”) without numbers.
-
-
-FORBIDDEN: "Started on [REDACTED DATE]"
-REQUIRED:"Started X months prior to the admission date"
-
-
-[3] PERSON & RECORD IDENTIFIERS
-•	Personal names (patients, relatives, clinicians, staff) -> [REDACTED NAME]
+[3] MEDICAL IDENTIFIERS
 •	Medical Record Numbers (MRN) -> [REDACTED MRN]
+•	Health Plan Beneficiary Numbers -> [REDACTED HEALTH PLAN ID]
+•	Account Numbers -> [REDACTED ACCOUNT NUMBER]
+•	Certificate/License Numbers -> [REDACTED LICENSE NUMBER]
+•	Device Identifiers/Serial Numbers -> [REDACTED DEVICE ID]
+•	Biometric Identifiers (fingerprints, voice prints) -> [REDACTED BIOMETRIC ID]
+•	Full-face photos and comparable images -> [REDACTED IMAGE]
+
+IMPORTANT CLARIFICATION:
+Do NOT redact common symptoms, diagnoses, or clinical observations 
+(e.g., breathlessness, anemia, headache, hypertension, diabetes) 
+unless they are associated with a rare disease that could identify the patient.
+
+IMPORTANT LOCATION CLARIFICATION FOR GDPR/LGPD/DPDP:
+Do NOT redact common City or State names for GDPR, LGPD, or DPDP unless they are uniquely identifying or appear together with other direct identifiers (e.g., full street address, ZIP/PIN). Keep city/state tokens to preserve clinical utility.
+Only redact unique medical device IDs, record numbers, biopsy codes, 
+or other direct identifiers listed above.
+
+[4] PERSON & RECORD IDENTIFIERS
+•	Personal names (patients, relatives, clinicians, staff) -> [REDACTED NAME]
 •	Social Security Numbers -> [REDACTED SSN]
 •	Account numbers or beneficiary identifiers -> [REDACTED ID]
 •	Certificate, license, or registration numbers -> [REDACTED LICENSE]
 •	Vehicle identifiers (VIN, license plates) -> [REDACTED VEHICLE ID]
-[4] GEOGRAPHIC, CONTACT & SOCIAL IDENTIFIERS
+
+[5] GEOGRAPHIC, CONTACT & SOCIAL IDENTIFIERS
 •	Street-level addresses -> [REDACTED ADDRESS]
 •	Cities, ZIP codes, districts, or precincts -> [REDACTED LOCATION]
 •	Email addresses -> [REDACTED EMAIL]
 •	Phone or fax numbers -> [REDACTED PHONE]
 •	Employers, workplaces, or job titles -> [REDACTED EMPLOYER]
 •	Rare or unique physical characteristics (scars, tattoos, deformities) -> [REDACTED UNIQUE FEATURE]
+
 ═══════════════════════════════════════════════════════════════
 EXECUTION RULES
 ═══════════════════════════════════════════════════════════════
@@ -592,9 +569,10 @@ EXECUTION RULES
 •	Maintain grammatical structure while redacting
 •	Example: "Admitted on Jan 12" -> "Admitted on [REDACTED DATE]"
 •	Example: "Seen by Dr. Rao" -> "Seen by [REDACTED NAME]"
-4.	FAILURE MODE BIAS
-•	Over-redaction is compliant
-•	Under-redaction is a critical failure
+4.	FAILURE MODE BIAS:
+    For HIPAA: Default to full redaction if uncertain.
+    For GDPR, UK_GDPR, LGPD, and DPDP: Default to TIER 3 (Relative/Generalization) if uncertain.
+    If a year (e.g., 2024) is detected and is NOT a Date of Birth, preserve the year to maintain clinical utility unless the regulation is HIPAA.
 ═══════════════════════════════════════════════════════════════
 BEGIN REDACTION NOW.
 """
@@ -631,17 +609,20 @@ TARGET LIST (SEARCH & DESTROY)
 •	Phone numbers (mobile, landline, fax) -> [REDACTED PHONE]
 •	Postal addresses (street, city, postal code) -> [REDACTED ADDRESS]
 •	Financial identifiers (IBAN, credit card, account numbers) -> [REDACTED FINANCIAL ID]
+
 [2] ONLINE & DIGITAL IDENTIFIERS
 •	IP addresses (IPv4, IPv6) -> [REDACTED IP ADDRESS]
 •	Cookie IDs, session tokens, device fingerprints -> [REDACTED TRACKING ID]
 •	MAC addresses, IMEI, device serial numbers -> [REDACTED DEVICE ID]
 •	URLs containing personal parameters or tracking -> [REDACTED URL]
 •	Social media handles, usernames, profile links -> [REDACTED USERNAME]
+
 [3] LOCATION DATA
 •	GPS coordinates, geolocation data -> [REDACTED LOCATION]
 •	Precise addresses (street-level) -> [REDACTED ADDRESS]
 •	City + postal code combinations -> [REDACTED LOCATION]
 •	Travel routes, mobility patterns -> [REDACTED LOCATION]
+
 [4] TEMPORAL & CONTEXTUAL DATA
 Temporal handling is governed exclusively by the Tier-Based Temporal Handling Policy above.
 
@@ -653,6 +634,12 @@ Temporal handling is governed exclusively by the Tier-Based Temporal Handling Po
 •	Political opinions, religious beliefs, philosophical beliefs -> [REDACTED SENSITIVE DATA]
 •	Trade union membership -> [REDACTED SENSITIVE DATA]
 •	Sexual orientation or behavior -> [REDACTED SENSITIVE DATA]
+
+IMPORTANT CLARIFICATION:
+Do NOT redact common symptoms, diagnoses, or clinical observations 
+(e.g., breathlessness, anemia, headache, hypertension, diabetes) 
+unless they are associated with a rare disease that could identify the patient.
+
 [6] INDIRECT IDENTIFIERS (Risk of Re-identification)
 •	Employment details (employer name, job title, department) -> [REDACTED EMPLOYER]
 •	Educational institution names -> [REDACTED INSTITUTION]
@@ -673,15 +660,15 @@ EXECUTION RULES
 •	Maintain grammatical structure while redacting
 •	Example: "Born on 15/03/1985" -> "Born on [REDACTED DATE]"
 •	Example: "Lives at 123 Main St" -> "Lives at [REDACTED ADDRESS]"
-4.	FAILURE MODE BIAS
-•	Over-redaction is compliant with GDPR data minimization (Article 5)
-•	Under-redaction is a critical GDPR violation
+4.	FAILURE MODE BIAS:
+    For GDPR, UK_GDPR, LGPD, and DPDP: Default to TIER 3 (Relative/Generalization) if uncertain.
+    If a year (e.g., 2024) is detected and is NOT a Date of Birth, preserve the year to maintain clinical utility unless the regulation is HIPAA.
 ═══════════════════════════════════════════════════════════════
 BEGIN REDACTION NOW.
 """
 
         # ============================================================
-        # UK GDPR (United Kingdom - Data Protection Act 2018 + UK GDPR)
+        # UK GDPR (United Kingdom)
         # ============================================================
         elif regulation == "UK_GDPR":
             return f"""You are a specialized UK GDPR Compliance Enforcement Engine.
@@ -691,7 +678,6 @@ Jurisdiction: United Kingdom (post-Brexit GDPR implementation)
 If a token could directly or indirectly identify a natural person, it must be destroyed.
 This includes identifiers, location data, online identifiers, and factors specific to identity.
 False positives are acceptable. False negatives are not.
-
 
 IMPORTANT CLARIFICATION:
 Temporal data MUST follow the Tier-Based Temporal Handling Policy below.
@@ -715,17 +701,20 @@ TARGET LIST (SEARCH & DESTROY)
 •	Phone numbers (mobile, landline, fax) -> [REDACTED PHONE]
 •	Postal addresses (street, city, postcode) -> [REDACTED ADDRESS]
 •	Financial identifiers (sort code, account number, card numbers) -> [REDACTED FINANCIAL ID]
+
 [2] ONLINE & DIGITAL IDENTIFIERS
 •	IP addresses (IPv4, IPv6) -> [REDACTED IP ADDRESS]
 •	Cookie IDs, session tokens, device fingerprints -> [REDACTED TRACKING ID]
 •	MAC addresses, IMEI, device serial numbers -> [REDACTED DEVICE ID]
 •	URLs containing personal parameters or tracking -> [REDACTED URL]
 •	Social media handles, usernames, profile links -> [REDACTED USERNAME]
+
 [3] LOCATION DATA
 •	GPS coordinates, geolocation data -> [REDACTED LOCATION]
 •	Precise addresses (street-level) -> [REDACTED ADDRESS]
 •	City + postcode combinations -> [REDACTED LOCATION]
 •	Travel routes, mobility patterns -> [REDACTED LOCATION]
+
 [4] TEMPORAL & CONTEXTUAL DATA
 Temporal handling is governed exclusively by the Tier-Based Temporal Handling Policy above.
 
@@ -737,6 +726,12 @@ Temporal handling is governed exclusively by the Tier-Based Temporal Handling Po
 •	Political opinions, religious beliefs, philosophical beliefs -> [REDACTED SENSITIVE DATA]
 •	Trade union membership -> [REDACTED SENSITIVE DATA]
 •	Sexual orientation or behavior -> [REDACTED SENSITIVE DATA]
+
+IMPORTANT CLARIFICATION:
+Do NOT redact common symptoms, diagnoses, or clinical observations 
+(e.g., breathlessness, anemia, headache, hypertension, diabetes) 
+unless they are associated with a rare disease that could identify the patient.
+
 [6] INDIRECT IDENTIFIERS (Risk of Re-identification)
 •	Employment details (employer name, job title, department) -> [REDACTED EMPLOYER]
 •	Educational institution names -> [REDACTED INSTITUTION]
@@ -757,15 +752,15 @@ EXECUTION RULES
 •	Maintain grammatical structure while redacting
 •	Example: "DOB: 15/03/1985" -> "DOB: [REDACTED DATE]"
 •	Example: "NI Number: AB123456C" -> "NI Number: [REDACTED NI NUMBER]"
-4.	FAILURE MODE BIAS
-•	Over-redaction is compliant with UK GDPR data minimization
-•	Under-redaction is a critical UK GDPR violation
+4.	FAILURE MODE BIAS:
+    For GDPR, UK_GDPR, LGPD, and DPDP: Default to TIER 3 (Relative/Generalization) if uncertain.
+    If a year (e.g., 2024) is detected and is NOT a Date of Birth, preserve the year to maintain clinical utility unless the regulation is HIPAA.
 ═══════════════════════════════════════════════════════════════
 BEGIN REDACTION NOW.
 """
 
         # ============================================================
-        # LGPD (Brazil - Lei Geral de Proteção de Dados)
+        # LGPD (Brazil)
         # ============================================================
         elif regulation == "LGPD":
             return f"""Você é um Motor de Aplicação de Conformidade LGPD especializado.
@@ -797,17 +792,20 @@ LISTA DE ALVOS (BUSCAR E DESTRUIR)
 •	Telefones (celular, fixo, fax) -> [REDACTED PHONE]
 •	Endereços postais (rua, cidade, CEP) -> [REDACTED ADDRESS]
 •	Identificadores financeiros (conta bancária, cartão de crédito) -> [REDACTED FINANCIAL ID]
+
 [2] IDENTIFICADORES ONLINE E DIGITAIS
 •	Endereços IP (IPv4, IPv6) -> [REDACTED IP ADDRESS]
 •	IDs de cookies, tokens de sessão, impressões digitais de dispositivos -> [REDACTED TRACKING ID]
 •	Endereços MAC, IMEI, números de série de dispositivos -> [REDACTED DEVICE ID]
 •	URLs contendo parâmetros pessoais ou rastreamento -> [REDACTED URL]
 •	Perfis de redes sociais, nomes de usuário, links de perfil -> [REDACTED USERNAME]
+
 [3] DADOS DE LOCALIZAÇÃO
 •	Coordenadas GPS, dados de geolocalização -> [REDACTED LOCATION]
 •	Endereços precisos (nível de rua) -> [REDACTED ADDRESS]
 •	Combinações de cidade + CEP -> [REDACTED LOCATION]
 •	Rotas de viagem, padrões de mobilidade -> [REDACTED LOCATION]
+
 [4] DADOS TEMPORAIS E CONTEXTUAIS
 O tratamento temporal é regido exclusivamente pela Política de Classificação Temporal acima.
 
@@ -820,6 +818,15 @@ O tratamento temporal é regido exclusivamente pela Política de Classificação
 •	Opinião política -> [REDACTED SENSITIVE DATA]
 •	Filiação a sindicato ou organização religiosa -> [REDACTED SENSITIVE DATA]
 •	Dados referentes à saúde ou vida sexual -> [REDACTED SENSITIVE DATA]
+
+IMPORTANTE:
+Não redija sintomas, diagnósticos ou observações clínicas comuns 
+(ex.: dispneia/breathlessness, anemia, cefaleia, hipertensão, diabetes) 
+a menos que estejam associados a uma doença rara que possa identificar o paciente.
+
+IMPORTANTE - LOCALIZAÇÃO:
+Não redija nomes comuns de cidade ou estado para LGPD a menos que sejam exclusivamente identificadores ou estejam associados a outros identificadores diretos (por exemplo, endereço completo, CEP). Preserve tokens de cidade/estado para manter a utilidade clínica.
+
 [6] IDENTIFICADORES INDIRETOS (Risco de Reidentificação)
 •	Detalhes de emprego (nome do empregador, cargo, departamento) -> [REDACTED EMPLOYER]
 •	Nomes de instituições educacionais -> [REDACTED INSTITUTION]
@@ -848,7 +855,7 @@ COMECE A REDAÇÃO AGORA.
 """
 
         # ============================================================
-        # DPDP (India - Digital Personal Data Protection Act 2023)
+        # DPDP (India)
         # ============================================================
         elif regulation == "DPDP":
             return f"""You are a specialized DPDP Compliance Enforcement Engine.
@@ -881,17 +888,20 @@ TARGET LIST (SEARCH & DESTROY)
 •	Phone numbers (mobile, landline) -> [REDACTED PHONE]
 •	Postal addresses (street, city, PIN code) -> [REDACTED ADDRESS]
 •	Financial identifiers (bank account, UPI ID, card numbers) -> [REDACTED FINANCIAL ID]
+
 [2] ONLINE & DIGITAL IDENTIFIERS
 •	IP addresses (IPv4, IPv6) -> [REDACTED IP ADDRESS]
 •	Cookie IDs, session tokens, device fingerprints -> [REDACTED TRACKING ID]
 •	MAC addresses, IMEI, device serial numbers -> [REDACTED DEVICE ID]
 •	URLs containing personal parameters or tracking -> [REDACTED URL]
 •	Social media handles, usernames, profile links -> [REDACTED USERNAME]
+
 [3] LOCATION DATA
 •	GPS coordinates, geolocation data -> [REDACTED LOCATION]
 •	Precise addresses (street-level) -> [REDACTED ADDRESS]
 •	City + PIN code combinations -> [REDACTED LOCATION]
 •	Travel routes, mobility patterns -> [REDACTED LOCATION]
+
 [4] TEMPORAL & CONTEXTUAL DATA
 Temporal handling is governed exclusively by the Tier-Based Temporal Handling Policy above.
 
@@ -903,6 +913,15 @@ Temporal handling is governed exclusively by the Tier-Based Temporal Handling Po
 •	Religious or political beliefs -> [REDACTED SENSITIVE DATA]
 •	Sexual orientation -> [REDACTED SENSITIVE DATA]
 •	Financial data (account details, credit scores) -> [REDACTED FINANCIAL DATA]
+
+IMPORTANT CLARIFICATION:
+Do NOT redact common symptoms, diagnoses, or clinical observations 
+(e.g., breathlessness, anemia, headache, hypertension, diabetes) 
+unless they are associated with a rare disease that could identify the patient.
+
+LOCATION CLARIFICATION FOR DPDP:
+Do NOT redact common City or State names for DPDP unless they are uniquely identifying or appear together with other direct identifiers (e.g., full street address, PIN). Preserve city/state tokens to preserve clinical utility.
+
 [6] INDIRECT IDENTIFIERS (Risk of Re-identification)
 •	Employment details (employer name, job title, department) -> [REDACTED EMPLOYER]
 •	Educational institution names -> [REDACTED INSTITUTION]
@@ -923,15 +942,15 @@ EXECUTION RULES
 •	Maintain grammatical structure while redacting
 •	Example: "Aadhaar: 1234 5678 9012" -> "Aadhaar: [REDACTED AADHAAR]"
 •	Example: "Lives in Mumbai 400001" -> "Lives in [REDACTED LOCATION]"
-4.	FAILURE MODE BIAS
-•	Over-redaction is compliant with DPDP data minimization principles
-•	Under-redaction is a critical DPDP violation
+4.	FAILURE MODE BIAS:
+    For GDPR, UK_GDPR, LGPD, and DPDP: Default to TIER 3 (Relative/Generalization) if uncertain.
+    If a year (e.g., 2024) is detected and is NOT a Date of Birth, preserve the year to maintain clinical utility unless the regulation is HIPAA.
 ═══════════════════════════════════════════════════════════════
 BEGIN REDACTION NOW.
 """
 
         # ============================================================
-        # BASE (Generic Privacy Baseline - Technology-Neutral)
+        # BASE (Generic Privacy Baseline)
         # ============================================================
         elif regulation == "BASE":
             return f"""You are a Generic Privacy Enforcement Engine.
@@ -961,12 +980,14 @@ TARGET LIST (SEARCH & DESTROY)
 •	Phone numbers (any format) -> [REDACTED PHONE]
 •	Postal addresses (street, city, postal/ZIP codes) -> [REDACTED ADDRESS]
 •	Financial identifiers (account numbers, card numbers, payment IDs) -> [REDACTED FINANCIAL ID]
+
 [2] DIGITAL IDENTIFIERS
 •	IP addresses (IPv4, IPv6) -> [REDACTED IP ADDRESS]
 •	Cookie IDs, session tokens, tracking pixels -> [REDACTED TRACKING ID]
 •	Device identifiers (MAC, IMEI, serial numbers, UUIDs) -> [REDACTED DEVICE ID]
 •	URLs containing personal or tracking data -> [REDACTED URL]
 •	Usernames, handles, profile identifiers -> [REDACTED USERNAME]
+
 [3] LOCATION & TEMPORAL DATA
 Temporal handling is governed exclusively by the Tier-Based Temporal Handling Policy above.
 
@@ -974,11 +995,18 @@ Temporal handling is governed exclusively by the Tier-Based Temporal Handling Po
 •	Biometric identifiers (fingerprints, facial data, retinal scans, voice prints) -> [REDACTED BIOMETRIC ID]
 •	Health information (diagnoses, treatments, medical records) -> [REDACTED HEALTH DATA]
 •	Genetic or DNA data -> [REDACTED GENETIC DATA]
+
+IMPORTANT CLARIFICATION:
+Do NOT redact common symptoms, diagnoses, or clinical observations 
+(e.g., breathlessness, anemia, headache, hypertension, diabetes) 
+unless they are associated with a rare disease that could identify the patient.
+
 [5] ORGANIZATIONAL & CONTEXTUAL DATA
 •	Employer names, workplace details -> [REDACTED EMPLOYER]
 •	Educational institution names -> [REDACTED INSTITUTION]
 •	Vehicle identifiers (license plates, VINs) -> [REDACTED VEHICLE ID]
 •	Unique characteristics (rare features, distinctive marks) -> [REDACTED UNIQUE FEATURE]
+
 [6] SENSITIVE ATTRIBUTES
 •	Race, ethnicity, caste -> [REDACTED SENSITIVE DATA]
 •	Religious, political, or philosophical beliefs -> [REDACTED SENSITIVE DATA]
@@ -999,9 +1027,9 @@ EXECUTION RULES
 •	Maintain grammatical structure while redacting
 •	Example: "Born on Jan 12, 1990" -> "Born on [REDACTED DATE]"
 •	Example: "Contact: alice@example.com" -> "Contact: [REDACTED EMAIL]"
-4.	FAILURE MODE BIAS
-•	Over-redaction is compliant with privacy-by-design principles
-•	Under-redaction is a critical privacy violation
+4.	FAILURE MODE BIAS:
+    For GDPR, UK_GDPR, LGPD, and DPDP: Default to TIER 3 (Relative/Generalization) if uncertain.
+    If a year (e.g., 2024) is detected and is NOT a Date of Birth, preserve the year to maintain clinical utility unless the regulation is HIPAA.
 ═══════════════════════════════════════════════════════════════
 BEGIN REDACTION NOW.
 """

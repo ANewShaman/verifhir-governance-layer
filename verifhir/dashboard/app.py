@@ -51,6 +51,13 @@ def get_engine():
     return RedactionEngine()
 
 engine = get_engine()
+# Apply any environment/jurisdiction-specific overlays immediately after engine init
+try:
+    # Use environment override or default to US. Avoid referencing UI vars here.
+    country = os.environ.get("VERIFHIR_DEFAULT_COUNTRY", "US")
+    engine._apply_country_overrides(country)
+except Exception:
+    pass
 
 # --- REGULATION METADATA ---
 REGULATION_INFO = {
@@ -506,12 +513,17 @@ with tab1:
                             # Handle OCR cases
                             if demo_mode == "DOCUMENT_OCR":
                                 st.session_state.ocr_extracted_text = demo_text
-                                st.session_state.ocr_confidence = 0.92
+                                # Explicitly label demo OCR as intentionally non-compliant and optional confidence
+                                st.session_state.ocr_confidence = None
                                 st.session_state.uploaded_image = None
+                                st.caption("Demo OCR content: intentionally non-compliant example (do not use for production)")
                             else:
                                 st.session_state.ocr_extracted_text = None
                                 st.session_state.ocr_confidence = None
                                 st.session_state.uploaded_image = None
+                            # Reset input state when switching modes to avoid cross-mode leakage
+                            st.session_state.input_mode = demo_mode
+                            st.session_state.last_input_text = demo_text
                             
                             st.rerun()
                     

@@ -20,10 +20,18 @@ def is_false_positive(violation: Any, resource: Optional[Dict] = None) -> bool:
     if hasattr(violation, 'description') and violation.description:
         desc_lower = violation.description.lower()
 
-    # False Positive: "Page 12" looking like an ID
-    if "page" in resource_str and "patient" not in resource_str:
-         # If the violation is an Identifier type, suppression is likely safe here
+    # Tightened suppression: suppress ONLY when explicit context mismatch exists
+    # e.g., 'page' present and NO clinical keywords nearby.
+    clinical_indicators = ["patient", "admit", "discharge", "mrn", "dob", "clinic", "hospital", "visit", "encounter", "age"]
+    if "page" in resource_str and not any(k in resource_str for k in clinical_indicators):
+         # If the violation is an Identifier type, suppression may be applied
          if hasattr(violation, 'violation_type') and ("identifier" in violation.violation_type.lower() or "id" in desc_lower):
+             # Gate suppression by regulation strictness if available on violation
+             reg = getattr(violation, 'regulation', '').upper() if hasattr(violation, 'regulation') else ''
+             # HIPAA is strict — do not suppress under HIPAA
+             if reg == 'HIPAA':
+                 return False
+             # For other regulations, allow suppression when clear non-clinical context
              return True
 
     return False

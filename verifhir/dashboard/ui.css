@@ -7,7 +7,8 @@
    ============================================ */
 
 /* --- BASE THEME --- */
-[data-testid="stAppViewContainer"] {
+/* Scope styles to app wrapper to avoid relying on Streamlit internal test IDs */
+.vf-app-root [data-testid="stAppViewContainer"] {
     background: radial-gradient(ellipse at top, #0f172a 0%, #020617 100%);
     color: #e2e8f0;
 }
@@ -17,7 +18,7 @@
 }
 
 /* --- SIDEBAR: WIDENED + NO GLASSMORPHISM --- */
-[data-testid="stSidebar"] {
+[data-testid="stSidebar"], .vf-sidebar {
     background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
     border-right: 1px solid rgba(255,255,255,0.06);
     min-width: 320px;
@@ -122,29 +123,29 @@ input:focus, textarea:focus, select:focus {
 
 /* --- REDACTION CHIPS --- */
 .redaction-chip {
-    background: rgba(59, 130, 246, 0.15);
-    color: #60a5fa;
-    border: 1px solid rgba(59, 130, 246, 0.3);
+    background: rgba(59, 130, 246, 0.18);
+    color: #0369a1; /* increased contrast */
+    border: 1px solid rgba(3, 105, 161, 0.35);
     border-radius: 4px;
     padding: 2px 8px;
     font-family: ui-monospace, 'SF Mono', monospace;
     font-size: 0.875rem;
-    font-weight: 500;
+    font-weight: 600;
 }
 
 /* --- DIFF VIEW STYLING --- */
 .diff-original {
-    color: #f87171;
+    color: #b91c1c; /* higher contrast red */
     text-decoration: line-through;
-    background: rgba(248, 113, 113, 0.1);
+    background: rgba(185, 28, 28, 0.12);
     padding: 2px 4px;
     border-radius: 3px;
 }
 
 .diff-redacted {
-    background: rgba(59, 130, 246, 0.15);
-    color: #60a5fa;
-    border: 1px solid rgba(59, 130, 246, 0.3);
+    background: rgba(59, 130, 246, 0.18);
+    color: #044e8c; /* deeper blue for contrast */
+    border: 1px solid rgba(4, 78, 140, 0.35);
     border-radius: 4px;
     padding: 2px 8px;
     font-family: ui-monospace, monospace;

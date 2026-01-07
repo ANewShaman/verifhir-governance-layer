@@ -54,6 +54,11 @@ class DeterministicRuleEngine:
         # --- 1. RESOLVE METADATA & CONTEXT ---
         citation = getattr(policy, "regulation_citation", "Unknown")
         reg_code = getattr(policy, "governing_regulation", "Unknown") or "Unknown"
+        # Normalize regulation codes for consistent logic
+        if isinstance(reg_code, str):
+            reg_code = reg_code.upper()
+        if isinstance(citation, str):
+            citation = citation.upper()
 
         if citation == "Unknown" and reg_code != "Unknown":
             citation_map = {
@@ -97,35 +102,54 @@ class DeterministicRuleEngine:
         # --- 3. SAFETY NET FALLBACKS ---
         if not raw_violations:
             resource_str = str(resource)
-            found_id = re.search(r"Patient ID\s+(\d+)", resource_str, re.IGNORECASE)
-            
-            if reg_code == "UK_GDPR" or "UK Data" in citation or subject_country == "GB":
+            # Use shared MRN/ID pattern rather than naive literal search
+            try:
+                from verifhir.remediation import patterns as shared_patterns
+                mrn_pat = shared_patterns.PATTERNS.get("MRN")
+            except Exception:
+                mrn_pat = re.compile(r"Patient ID\s+(\d+)", re.IGNORECASE)
+
+            found_id = None
+            if mrn_pat:
+                m = mrn_pat.search(resource_str)
+                if m:
+                    found_id = m.group(0)
+
+            if reg_code == "UK_GDPR" or "UK DATA" in citation or subject_country == "GB":
                 if found_id:
-                    raw_violations.append(self._make_violation("UK_NHS_NUMBER", "UK_GDPR", "UK Data Protection Act 2018 / UK GDPR Article 5", f"UK NHS Number / Patient ID detected: {found_id.group(0)}"))
+                    raw_violations.append(self._make_violation("UK_NHS_NUMBER", "UK_GDPR", "UK Data Protection Act 2018 / UK GDPR Article 5", f"UK NHS Number / Patient ID detected: {found_id}", rule_id="UK_NHS_FALLBACK", span=str(found_id)))
             elif reg_code == "PIPEDA" or "PIPEDA" in citation or subject_country == "CA":
                 consent_status = resource.get("meta", {}).get("consent_status")
                 if consent_status != "obtained" and found_id:
-                    raw_violations.append(self._make_violation("UNCONSENTED_IDENTIFIER", "PIPEDA", citation, "Personal Information detected under PIPEDA"))
+                    raw_violations.append(self._make_violation("UNCONSENTED_IDENTIFIER", "PIPEDA", citation, "Personal Information detected under PIPEDA", rule_id="PIPEDA_FALLBACK", span=str(found_id)))
             elif reg_code == "GDPR" and found_id:
-                raw_violations.append(self._make_violation("GDPR_IDENTIFIER", "GDPR", citation, "Personal Identifier detected under GDPR"))
+                raw_violations.append(self._make_violation("GDPR_IDENTIFIER", "GDPR", citation, "Personal Identifier detected under GDPR", rule_id="GDPR_FALLBACK", span=str(found_id)))
             elif (reg_code == "DPDP" or "DPDP" in citation) and resource.get("resourceType") == "Patient":
-                 # FIX: Pass severity explicitly instead of mutating later
-                 v = self._make_violation(
-                    type="DPDP_CONSENT_MISSING", 
-                    reg="DPDP", 
-                    cite=citation, 
+                # Pass severity explicitly instead of mutating later
+                v = self._make_violation(
+                    type="DPDP_CONSENT_MISSING",
+                    reg="DPDP",
+                    cite=citation,
                     msg="India data principal detected without explicit consent.",
-                    severity=ViolationSeverity.MINOR
-                 )
-                 raw_violations.append(v)
+                    severity=ViolationSeverity.MINOR,
+                    rule_id="DPDP_FALLBACK",
+                    span=str(resource.get("id", "unknown"))
+                )
+                raw_violations.append(v)
 
         # --- 4. CONTROLS (Day 19) ---
+        # Apply controls and deduplicate using (violation_type, span, rule_id)
         clean_violations = []
+        seen = set()
         for v in raw_violations:
             if is_allowlisted(v):
-                 continue
+                continue
             if is_false_positive(v, resource):
-                 continue
+                continue
+            key = (getattr(v, 'violation_type', None), getattr(v, 'span', None), getattr(v, 'rule_id', None))
+            if key in seen:
+                continue
+            seen.add(key)
             clean_violations.append(v)
 
         return clean_violations
@@ -137,7 +161,7 @@ class DeterministicRuleEngine:
             self.logger.warning(f"Rule Execution Failed: {e}")
             return []
 
-    def _make_violation(self, type, reg, cite, msg, severity=ViolationSeverity.MAJOR):
+    def _make_violation(self, type, reg, cite, msg, severity=ViolationSeverity.MAJOR, rule_id: Optional[str]=None, span: Optional[str]=None):
         return Violation(
             violation_type=type,
             severity=severity,
@@ -146,7 +170,9 @@ class DeterministicRuleEngine:
             field_path="note.text",
             description=msg,
             detection_method="DeterministicRule",
-            confidence=1.0
+            confidence=1.0,
+            span=span,
+            rule_id=rule_id
         )
 
 # --- SINGLETON BRIDGE ---

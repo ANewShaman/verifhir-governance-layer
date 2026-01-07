@@ -19,3 +19,6 @@ class Violation:
     description: str
     detection_method: str  # rule-based | ml-primary | ml-augmented
     confidence: Optional[float] = None
+    # Optional audit fields to support deduplication and span attribution
+    span: Optional[str] = None
+    rule_id: Optional[str] = None
