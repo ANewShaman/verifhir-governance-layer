@@ -152,6 +152,38 @@ class RedactionEngine:
         self.fallback_engine = RegexFallbackEngine()
         self._initialize_client()
 
+    def _store_regulation_context(self, regulation: str, country: str):
+        """Store regulation context for validation checks"""
+        self.regulation = regulation
+        self.country = country
+        # Also update fallback engine's regulation
+        if hasattr(self.fallback_engine, 'regulation'):
+            self.fallback_engine.regulation = regulation
+
+
+    # Then modify generate_suggestion method to call this at the start (around line 58):
+    def generate_suggestion(self, text: str, regulation: str, country: str = "US") -> Dict[str, Any]:
+        """
+        Main entry point for multi-regulation redaction.
+        Tries Azure OpenAI first, falls back to regex on failure.
+    
+        Args:
+            text: Input text to redact
+            regulation: One of HIPAA, GDPR, UK_GDPR, LGPD, DPDP, BASE
+            country: ISO country code (used for context)
+        """
+        if not text or not text.strip():
+            return self._create_response(text, text, "No-Op", {"regulation": regulation})
+
+        # Validate regulation
+        valid_regulations = ["HIPAA", "GDPR", "UK_GDPR", "LGPD", "DPDP", "BASE"]
+        if regulation not in valid_regulations:
+            self.logger.warning(f"Unknown regulation '{regulation}', defaulting to BASE")
+            regulation = "BASE"
+    
+        # Store regulation context for validation
+        self._store_regulation_context(regulation, country)
+
     def _initialize_client(self):
         if self.api_key and self.endpoint:
             try:
@@ -372,6 +404,57 @@ class RedactionEngine:
                     "valid": False,
                     "reason": f"PII Leak Detected: Unredacted {pii_type}"
                 }
+            
+
+        # Check 5: DPDP-specific validation for Indian PII
+        if hasattr(self, 'regulation') and self.regulation == "DPDP":
+        # Check for unredacted Aadhaar numbers (12 digits with optional spaces/dashes)
+            if re.search(r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}\b", response):
+                return {
+                    "valid": False,
+                    "reason": "DPDP Violation: Unredacted Aadhaar number detected"
+                }       
+    
+            # Check for Indian PIN codes (6 digits)
+            if re.search(r"\b\d{6}\b", response):
+                # Allow if it's part of a redaction tag, otherwise fail
+                if not re.search(r"\[REDACTED[^\]]*\d{6}", response):
+                    return {
+                        "valid": False,
+                        "reason": "DPDP Violation: Unredacted PIN code detected"
+                    }
+    
+            # Check for common Indian address patterns
+            indian_address_patterns = [
+                r"\bFlat\s+(?:No\.?\s*)?\d+",
+                r"\bPlot\s+(?:No\.?\s*)?\d+",
+                r"\bApartment",
+                r"\b\d+(?:st|nd|rd|th)?\s+(?:Cross|Main|Road|Street|Avenue)",
+                r"\b(?:MG|Brigade|Residency|Layout|Nagar|Halli|Pally)\s+Road",
+            ]
+    
+            for pattern in indian_address_patterns:
+                if re.search(pattern, response, re.IGNORECASE):
+                    return {
+                        "valid": False,
+                        "reason": f"DPDP Violation: Unredacted address component detected ({pattern})"
+                    }
+    
+            # Check for common Indian names (multi-word capitalized patterns)
+            # Only flag if NOT already inside a redaction tag
+            name_pattern = r"\b(?<!REDACTED\s)([A-Z][a-z]{2,})\s+([A-Z][a-z]{2,})\b"
+            matches = re.finditer(name_pattern, response)
+            for match in matches:
+                # Skip if it's a known safe term
+                full_match = match.group(0)
+                if full_match not in ["Doctor Patient", "Medical Record", "Health Data"]:
+                    return {
+                        "valid": False,
+                        "reason": f"DPDP Violation: Potential unredacted name detected: {full_match}"
+                    }
+    
+
+
 
         return {"valid": True, "reason": "All validations passed"}
 
@@ -454,7 +537,25 @@ class RedactionEngine:
         """Execute regex-based fallback redaction."""
         self.logger.info(f"Executing regex fallback: {reason} (reg={regulation} country={country})")
 
-        safe_text, rules = self.fallback_engine.redact(text)
+        # Create regulation-specific fallback engine
+        fallback_engine = RegexFallbackEngine(regulation=regulation)
+
+        # If DPDP and the input is JSON text, prefer structured traversal (do NOT rely on str(resource)).
+        structured_input = None
+        if regulation == "DPDP" and isinstance(text, str):
+            try:
+                import json as _json
+                parsed = _json.loads(text)
+                # Only use parsed structure if it's a dict or list
+                if isinstance(parsed, (dict, list)):
+                    structured_input = parsed
+            except Exception:
+                structured_input = None
+
+        if structured_input is not None:
+            safe_text, rules = fallback_engine.redact(structured_input)
+        else:
+            safe_text, rules = fallback_engine.redact(text)
 
         for token_name, token_value in self.CANARY_TOKENS.items():
             if token_value in str(safe_text):
@@ -871,80 +972,105 @@ Temporal data MUST follow the Tier-Based Temporal Handling Policy below.
 Do NOT treat all dates as direct identifiers.
 Redaction of dates is permitted ONLY after tier classification.
 
-────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────────────
 TEMPORAL HANDLING POLICY (MANDATORY)
-────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────────────
 {TEMPORAL_TIER_BLOCK}
 
 ═══════════════════════════════════════════════════════════════
 TARGET LIST (SEARCH & DESTROY)
 ═══════════════════════════════════════════════════════════════
-[1] DIRECT IDENTIFIERS
-•	Full names (first, middle, last) -> [REDACTED NAME]
-•	Aadhaar number (12-digit unique ID) -> [REDACTED AADHAAR]
-•	PAN (Permanent Account Number) -> [REDACTED PAN]
-•	Voter ID, Passport number, Driving License -> [REDACTED ID]
-•	Email addresses -> [REDACTED EMAIL]
-•	Phone numbers (mobile, landline) -> [REDACTED PHONE]
-•	Postal addresses (street, city, PIN code) -> [REDACTED ADDRESS]
-•	Financial identifiers (bank account, UPI ID, card numbers) -> [REDACTED FINANCIAL ID]
+[1] DIRECT IDENTIFIERS (ZERO TOLERANCE)
+• Full names (first, middle, last) -> [REDACTED NAME]
+• Aadhaar number (12-digit unique ID) -> [REDACTED AADHAAR]
+• PAN (Permanent Account Number) -> [REDACTED PAN]
+• Voter ID, Passport number, Driving License -> [REDACTED ID]
+• Email addresses -> [REDACTED EMAIL]
+• Phone numbers (mobile, landline) -> [REDACTED PHONE]
+• Postal addresses (street, city, PIN code) -> [REDACTED ADDRESS]
+• Financial identifiers (bank account, UPI ID, card numbers) -> [REDACTED FINANCIAL ID]
+
+CRITICAL ADDRESS HANDLING RULE:
+• ANY address containing street numbers, apartment numbers, flat numbers, plot numbers, 
+  building names, or street names MUST be redacted as [REDACTED ADDRESS]
+• This includes: "Flat No. 101, Sunshine Apartments", "Plot 45, 2nd Cross", 
+  "789 MG Road", "Indiranagar", etc.
+• Only preserve STATE-LEVEL or NATIONAL-LEVEL geographic context if needed for 
+  clinical utility (e.g., "Karnataka" or "India" may be preserved)
+• City names combined with ANY other address element MUST be fully redacted
+• PIN codes MUST ALWAYS be redacted as [REDACTED PIN]
+
+CRITICAL NAME HANDLING RULE:
+• ALL personal names must be redacted, including common Indian names
+• This includes: "Rajesh Kumar", "Amit Sharma", "Maria Silva", etc.
+• Do NOT make exceptions for "common" names - all names are identifiers
 
 [2] ONLINE & DIGITAL IDENTIFIERS
-•	IP addresses (IPv4, IPv6) -> [REDACTED IP ADDRESS]
-•	Cookie IDs, session tokens, device fingerprints -> [REDACTED TRACKING ID]
-•	MAC addresses, IMEI, device serial numbers -> [REDACTED DEVICE ID]
-•	URLs containing personal parameters or tracking -> [REDACTED URL]
-•	Social media handles, usernames, profile links -> [REDACTED USERNAME]
+• IP addresses (IPv4, IPv6) -> [REDACTED IP ADDRESS]
+• Cookie IDs, session tokens, device fingerprints -> [REDACTED TRACKING ID]
+• MAC addresses, IMEI, device serial numbers -> [REDACTED DEVICE ID]
+• URLs containing personal parameters or tracking -> [REDACTED URL]
+• Social media handles, usernames, profile links -> [REDACTED USERNAME]
 
 [3] LOCATION DATA
-•	GPS coordinates, geolocation data -> [REDACTED LOCATION]
-•	Precise addresses (street-level) -> [REDACTED ADDRESS]
-•	City + PIN code combinations -> [REDACTED LOCATION]
-•	Travel routes, mobility patterns -> [REDACTED LOCATION]
+• GPS coordinates, geolocation data -> [REDACTED LOCATION]
+• Precise addresses (street-level) -> [REDACTED ADDRESS]
+• City + PIN code combinations -> [REDACTED LOCATION]
+• Travel routes, mobility patterns -> [REDACTED LOCATION]
+• Street names, road names, locality names -> [REDACTED ADDRESS]
+• Building names, apartment names, complex names -> [REDACTED ADDRESS]
 
 [4] TEMPORAL & CONTEXTUAL DATA
 Temporal handling is governed exclusively by the Tier-Based Temporal Handling Policy above.
 
 [5] SENSITIVE PERSONAL DATA (Section 2(g))
-•	Health data (diagnoses, treatments, medical records) -> [REDACTED HEALTH DATA]
-•	Biometric data (fingerprints, facial recognition, iris scans) -> [REDACTED BIOMETRIC ID]
-•	Genetic data -> [REDACTED GENETIC DATA]
-•	Caste or tribe information -> [REDACTED SENSITIVE DATA]
-•	Religious or political beliefs -> [REDACTED SENSITIVE DATA]
-•	Sexual orientation -> [REDACTED SENSITIVE DATA]
-•	Financial data (account details, credit scores) -> [REDACTED FINANCIAL DATA]
+• Health data (diagnoses, treatments, medical records) -> [REDACTED HEALTH DATA]
+• Biometric data (fingerprints, facial recognition, iris scans) -> [REDACTED BIOMETRIC ID]
+• Genetic data -> [REDACTED GENETIC DATA]
+• Caste or tribe information -> [REDACTED SENSITIVE DATA]
+• Religious or political beliefs -> [REDACTED SENSITIVE DATA]
+• Sexual orientation -> [REDACTED SENSITIVE DATA]
+• Financial data (account details, credit scores) -> [REDACTED FINANCIAL DATA]
 
 IMPORTANT CLARIFICATION:
 Do NOT redact common symptoms, diagnoses, or clinical observations 
 (e.g., breathlessness, anemia, headache, hypertension, diabetes) 
 unless they are associated with a rare disease that could identify the patient.
 
-LOCATION CLARIFICATION FOR DPDP:
-Do NOT redact common City or State names for DPDP unless they are uniquely identifying or appear together with other direct identifiers (e.g., full street address, PIN). Preserve city/state tokens to preserve clinical utility.
-
 [6] INDIRECT IDENTIFIERS (Risk of Re-identification)
-•	Employment details (employer name, job title, department) -> [REDACTED EMPLOYER]
-•	Educational institution names -> [REDACTED INSTITUTION]
-•	Vehicle registration numbers -> [REDACTED VEHICLE ID]
-•	Unique physical characteristics or attributes -> [REDACTED UNIQUE FEATURE]
+• Employment details (employer name, job title, department) -> [REDACTED EMPLOYER]
+• Educational institution names -> [REDACTED INSTITUTION]
+• Vehicle registration numbers -> [REDACTED VEHICLE ID]
+• Unique physical characteristics or attributes -> [REDACTED UNIQUE FEATURE]
+
 ═══════════════════════════════════════════════════════════════
 EXECUTION RULES
 ═══════════════════════════════════════════════════════════════
-1.	OUTPUT FORMAT
-•	Return the original text verbatim
-•	Replace only detected identifiers with the specified redaction tags
-•	Do not reformat, paraphrase, summarize, or reorder content
-2.	NO COMMENTARY
-•	Do not explain actions
-•	Do not justify redactions
-•	Do not refuse processing or add disclaimers
-3.	CONTEXT-AWARE REPLACEMENT
-•	Maintain grammatical structure while redacting
-•	Example: "Aadhaar: 1234 5678 9012" -> "Aadhaar: [REDACTED AADHAAR]"
-•	Example: "Lives in Mumbai 400001" -> "Lives in [REDACTED LOCATION]"
-4.	FAILURE MODE BIAS:
-    For GDPR, UK_GDPR, LGPD, and DPDP: Default to TIER 3 (Relative/Generalization) if uncertain.
-    If a year (e.g., 2024) is detected and is NOT a Date of Birth, preserve the year to maintain clinical utility unless the regulation is HIPAA.
+1. OUTPUT FORMAT
+• Return the original text verbatim
+• Replace only detected identifiers with the specified redaction tags
+• Do not reformat, paraphrase, summarize, or reorder content
+
+2. NO COMMENTARY
+• Do not explain actions
+• Do not justify redactions
+• Do not refuse processing or add disclaimers
+
+3. CONTEXT-AWARE REPLACEMENT
+• Maintain grammatical structure while redacting
+• Example: "Patient Name: Rajesh Kumar" -> "Patient Name: [REDACTED NAME]"
+• Example: "Address: Flat No. 101, Sunshine Apartments, MG Road, Bangalore, Karnataka - 560001" 
+  -> "Address: [REDACTED ADDRESS], Karnataka - [REDACTED PIN]"
+• Example: "Aadhaar: 1234 5678 9012" -> "Aadhaar: [REDACTED AADHAAR]"
+
+4. FAILURE MODE BIAS
+• For DPDP: When uncertain about whether to redact, DEFAULT TO REDACTION
+• If a token MIGHT be identifying, it MUST be redacted
+• Preserve only state-level geographic context when clinically necessary
+• For dates: Default to TIER 3 (Relative/Generalization) if uncertain
+• If a year (e.g., 2024) is detected and is NOT a Date of Birth, 
+  preserve the year to maintain clinical utility
+
 ═══════════════════════════════════════════════════════════════
 BEGIN REDACTION NOW.
 """

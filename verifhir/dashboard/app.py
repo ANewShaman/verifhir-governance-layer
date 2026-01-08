@@ -16,6 +16,12 @@ import hashlib
 import os
 import re
 
+from verifhir.runtime.graceful_exit import (
+    install_signal_handlers,
+    graceful_execution_context,
+)
+
+
 # NEW: Import demo cases as single source of truth
 from verifhir.dashboard.demo_cases import demo_cases as REG_DEMO_CASES
 
@@ -27,6 +33,8 @@ def safe_text(value):
     return html.escape(str(value)) if value is not None else ""
 
 init_telemetry()
+install_signal_handlers()
+
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -50,7 +58,17 @@ def get_engine():
     """Load the backend engine once; cache for session performance."""
     return RedactionEngine()
 
-engine = get_engine()
+with graceful_execution_context():
+
+    engine = get_engine()
+
+    # Apply any environment/jurisdiction-specific overlays immediately after engine init
+    try:
+        country = os.environ.get("VERIFHIR_DEFAULT_COUNTRY", "US")
+        engine._apply_country_overrides(country)
+    except Exception:
+        pass
+
 # Apply any environment/jurisdiction-specific overlays immediately after engine init
 try:
     # Use environment override or default to US. Avoid referencing UI vars here.
