@@ -2,22 +2,28 @@
 # d:\verifhir\verifhir-governance-layer\verifhir\dashboard\app.py
 
 import streamlit as st
-import os
 import time
 import json
 import datetime
 import difflib
 import html
+from verifhir.remediation.redactor import RedactionEngine
+from verifhir.storage import commit_record
+from verifhir.adapters.hl7_adapter import normalize_input
+from verifhir.models.input_provenance import InputProvenance
+from verifhir.telemetry import init_telemetry
 import hashlib
+import os
 import re
 
-if os.environ.get("AZURE_HEALTH_CHECK") == "1":
-    print("HEALTH_OK")
+from verifhir.runtime.graceful_exit import (
+    install_signal_handlers,
+    graceful_execution_context,
+)
 
-def get_demo_cases():
-    from verifhir.dashboard.demo_cases import demo_cases
-    return demo_cases
 
+# NEW: Import demo cases as single source of truth
+from verifhir.dashboard.demo_cases import demo_cases as REG_DEMO_CASES
 
 def safe_text(value):
     """
@@ -26,15 +32,8 @@ def safe_text(value):
     """
     return html.escape(str(value)) if value is not None else ""
 
-def init_runtime():
-    from verifhir.telemetry import init_telemetry
-    from verifhir.runtime.graceful_exit import install_signal_handlers
-
-    try:
-        init_telemetry()
-        install_signal_handlers()
-    except Exception as e:
-        st.warning(f"Runtime init warning: {e}")
+init_telemetry()
+install_signal_handlers()
 
 
 # --- PAGE CONFIGURATION ---
@@ -55,28 +54,13 @@ except Exception as _e:
 
 # --- BACKEND INITIALIZATION ---
 @st.cache_resource
-def load_engine():
-    from verifhir.remediation.redactor import RedactionEngine
-    engine = RedactionEngine()
+def get_engine():
+    """Load the backend engine once; cache for session performance."""
+    return RedactionEngine()
 
-    country = os.environ.get("VERIFHIR_DEFAULT_COUNTRY", "US")
-    try:
-        engine._apply_country_overrides(country)
-    except Exception:
-        pass
+with graceful_execution_context():
 
-    return engine
-
-try:
-    from verifhir.runtime.graceful_exit import graceful_execution_context
-except Exception:
-    graceful_execution_context = None
-
-if graceful_execution_context:
-    with graceful_execution_context():
-        engine = load_engine()
-else:
-    engine = load_engine()
+    engine = get_engine()
 
     # Apply any environment/jurisdiction-specific overlays immediately after engine init
     try:
@@ -158,10 +142,10 @@ def get_demo_options_by_type(data_type, regulation):
     reg_key = REG_MAP.get(regulation, "base_cases")
     
     # FIXED: Add safety check for regulation existence
-    if reg_key not in get_demo_cases():
+    if reg_key not in REG_DEMO_CASES:
         return options
     
-    reg_cases = get_demo_cases()[reg_key]
+    reg_cases = REG_DEMO_CASES[reg_key]
     
     # Map data types to case types in demo_cases.py
     if data_type == "text/json":
@@ -215,7 +199,7 @@ def extract_demo_text(reg_key, case_key):
     Handles dict, str, and nested structures.
     """
     try:
-        case_data = get_demo_cases()[reg_key][case_key]
+        case_data = REG_DEMO_CASES[reg_key][case_key]
         
         if isinstance(case_data, str):
             return case_data
@@ -776,8 +760,6 @@ with tab1:
                         )
                         
                         if decision == "APPROVED":
-                            from verifhir.storage import commit_record
-
                             file_id = commit_record(
                                 original_text=res['original_text'],
                                 redacted_text=res['suggested_redaction'],
@@ -994,9 +976,6 @@ with tab1:
                         
                         if st.session_state.input_mode == "DOCUMENT_OCR":
                             system_config_hash = compute_system_config_hash()
-
-                            from verifhir.models.input_provenance import InputProvenance
-
                             st.session_state.input_provenance = InputProvenance(
                                 original_format="IMAGE",
                                 system_config_hash=system_config_hash,
@@ -1009,9 +988,6 @@ with tab1:
                             emit_converter_status("success")
                             
                         elif st.session_state.input_mode == "HL7":
-
-                            from verifhir.adapters.hl7_adapter import normalize_input
-
                             raw_payload = input_text
                             normalized = normalize_input(
                                 payload=raw_payload,
