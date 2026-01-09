@@ -16,6 +16,10 @@ import hashlib
 import os
 import re
 
+if os.environ.get("AZURE_HEALTH_CHECK") == "1":
+    print("HEALTH_OK")
+
+
 from verifhir.runtime.graceful_exit import (
     install_signal_handlers,
     graceful_execution_context,
@@ -32,8 +36,12 @@ def safe_text(value):
     """
     return html.escape(str(value)) if value is not None else ""
 
-init_telemetry()
-install_signal_handlers()
+try:
+    init_telemetry()
+    install_signal_handlers()
+except Exception as e:
+    print(f"Startup warning (telemetry): {e}")
+
 
 
 # --- PAGE CONFIGURATION ---
