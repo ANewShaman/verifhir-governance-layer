@@ -538,7 +538,8 @@ class RedactionEngine:
         self.logger.info(f"Executing regex fallback: {reason} (reg={regulation} country={country})")
 
         # Create regulation-specific fallback engine
-        fallback_engine = RegexFallbackEngine(regulation=regulation)
+        fallback_engine = RegexFallbackEngine()
+        fallback_engine.regulation = regulation
 
         # If DPDP and the input is JSON text, prefer structured traversal (do NOT rely on str(resource)).
         structured_input = None
