@@ -226,6 +226,17 @@ def get_input_mode_from_case(case_key):
     else:
         return "TEXT"
 
+
+def _extract_redacted_text(suggestion):
+    if isinstance(suggestion, dict):
+        return suggestion.get("redacted_text", "")
+    if isinstance(suggestion, str):
+        return suggestion
+    return ""
+
+
+
+
 # --- HELPER: ENHANCED VISUAL DIFF GENERATOR ---
 def generate_diff_html(original, redacted):
     """
@@ -234,6 +245,13 @@ def generate_diff_html(original, redacted):
     - Redacted tags in clean blue chips
     - Better spacing and readability
     """
+
+    #Here changed
+    if not isinstance(original, str):
+        original = str(original or "")
+    if not isinstance(redacted, str):
+        redacted = str(redacted or "")
+    
     d = difflib.SequenceMatcher(None, original, redacted)
     html_parts = []
     
@@ -308,6 +326,10 @@ def generate_clean_output(redacted_text):
     """
     Generates a clean, final output view with highlighted redaction tags.
     """
+
+    redacted_text = _extract_redacted_text(redacted_text)
+
+    
     def highlight_tag(match):
         tag_content = match.group(0)
         escaped = html.escape(tag_content)
@@ -583,7 +605,7 @@ with tab1:
         
         if view_mode == "Redline (Changes)":
             st.markdown("**Changes Detected:**")
-            diff_html = generate_diff_html(res['original_text'], res['suggested_redaction'])
+            diff_html = generate_diff_html(res['original_text'], _extract_redacted_text(res['suggested_redaction']))
             
             st.markdown(
                 f"""
@@ -595,7 +617,7 @@ with tab1:
             )
         else:
             st.markdown("**Final Redacted Output:**")
-            clean_html = generate_clean_output(res['suggested_redaction'])
+            clean_html = generate_clean_output(_extract_redacted_text(res['suggested_redaction']))
             
             st.markdown(
                 f"""

@@ -161,28 +161,6 @@ class RedactionEngine:
             self.fallback_engine.regulation = regulation
 
 
-    # Then modify generate_suggestion method to call this at the start (around line 58):
-    def generate_suggestion(self, text: str, regulation: str, country: str = "US") -> Dict[str, Any]:
-        """
-        Main entry point for multi-regulation redaction.
-        Tries Azure OpenAI first, falls back to regex on failure.
-    
-        Args:
-            text: Input text to redact
-            regulation: One of HIPAA, GDPR, UK_GDPR, LGPD, DPDP, BASE
-            country: ISO country code (used for context)
-        """
-        if not text or not text.strip():
-            return self._create_response(text, text, "No-Op", {"regulation": regulation})
-
-        # Validate regulation
-        valid_regulations = ["HIPAA", "GDPR", "UK_GDPR", "LGPD", "DPDP", "BASE"]
-        if regulation not in valid_regulations:
-            self.logger.warning(f"Unknown regulation '{regulation}', defaulting to BASE")
-            regulation = "BASE"
-    
-        # Store regulation context for validation
-        self._store_regulation_context(regulation, country)
 
     def _initialize_client(self):
         if self.api_key and self.endpoint:
@@ -214,6 +192,9 @@ class RedactionEngine:
         if regulation not in valid_regulations:
             self.logger.warning(f"Unknown regulation '{regulation}', defaulting to BASE")
             regulation = "BASE"
+
+        # ADD THIS LINE HERE:
+        self._store_regulation_context(regulation, country)
 
         # Try AI redaction if available
         if self.client:
