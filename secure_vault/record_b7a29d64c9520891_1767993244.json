@@ -1,0 +1,44 @@
+{
+  "record_id": "b7a29d64c9520891",
+  "timestamp": "2026-01-10T02:44:04.494679",
+  "status": "COMMITTED",
+  "metadata": {
+    "timestamp": "2026-01-10T02:43:27.113013+00:00",
+    "elapsed_seconds": 3.263,
+    "model": "verifhir-gpt-4o",
+    "regulation": "HIPAA",
+    "validation": "passed",
+    "regulation_context": "HIPAA",
+    "country_code": "US",
+    "negative_assertions": [
+      {
+        "category": "Biometric Identifiers",
+        "status": "NOT_DETECTED",
+        "supported_by": "Azure OpenAI (verifhir-gpt-4o) - HIPAA",
+        "scope_note": "Not detected within detector coverage"
+      },
+      {
+        "category": "Genetic Data",
+        "status": "NOT_DETECTED",
+        "supported_by": "Azure OpenAI (verifhir-gpt-4o) - HIPAA",
+        "scope_note": "Not detected within detector coverage"
+      },
+      {
+        "category": "National Identifiers",
+        "status": "NOT_DETECTED",
+        "supported_by": "Azure OpenAI (verifhir-gpt-4o) - HIPAA",
+        "scope_note": "Not detected within detector coverage"
+      },
+      {
+        "category": "Financial Account Numbers",
+        "status": "NOT_DETECTED",
+        "supported_by": "Azure OpenAI (verifhir-gpt-4o) - HIPAA",
+        "scope_note": "Not detected within detector coverage"
+      }
+    ]
+  },
+  "data": {
+    "original_text_length": 715,
+    "redacted_text": "{\n  \"patient_name\": \"[REDACTED NAME]\",\n  \"dob\": \"[REDACTED DATE]\",\n  \"mrn\": \"[REDACTED MRN]\",\n  \"ssn\": \"[REDACTED SSN]\",\n  \"address\": \"[REDACTED ADDRESS]\",\n  \"phone\": \"[REDACTED PHONE]\",\n  \"admission_date\": \"[REDACTED DATE]\",\n  \"discharge_date\": \"[REDACTED DATE]\",\n  \"admitting_diagnosis\": \"Community-acquired pneumonia\",\n  \"discharge_diagnosis\": \"Community-acquired pneumonia, resolved\",\n  \"past_medical_history\": [\n    \"Hypertension\",\n    \"Seasonal allergic rhinitis\"\n  ],\n  \"medications_on_discharge\": [\n    \"Amoxicillin-clavulanate 875 mg twice daily for 5 days\",\n    \"Lisinopril 10 mg daily\"\n  ],\n  \"attending_physician\": \"[REDACTED NAME]\",\n  \"facility\": \"[REDACTED NAME]\"\n}\n\n] ] ]"
+  }
+}
